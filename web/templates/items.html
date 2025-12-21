@@ -30,10 +30,15 @@
                     hx-target="#items-grid"
                     hx-include="[name='q']"
                     hx-push-url="true">
-                <option value="title" {{if eq .Sort "title"}}selected{{end}}>Title A-Z</option>
-                <option value="recent" {{if eq .Sort "recent"}}selected{{end}}>Recently Played</option>
-                <option value="added" {{if eq .Sort "added"}}selected{{end}}>Recently Added</option>
-                <option value="author" {{if eq .Sort "author"}}selected{{end}}>Author</option>
+                <option value="title-asc" {{if eq .Sort "title-asc"}}selected{{end}}>Title A-Z</option>
+                <option value="title-desc" {{if eq .Sort "title-desc"}}selected{{end}}>Title Z-A</option>
+                <option value="author-asc" {{if eq .Sort "author-asc"}}selected{{end}}>Author A-Z</option>
+                <option value="author-desc" {{if eq .Sort "author-desc"}}selected{{end}}>Author Z-A</option>
+                <option value="added-desc" {{if eq .Sort "added-desc"}}selected{{end}}>Recently Added</option>
+                <option value="added-asc" {{if eq .Sort "added-asc"}}selected{{end}}>Oldest First</option>
+                <option value="recent-desc" {{if eq .Sort "recent-desc"}}selected{{end}}>Recently Played</option>
+                <option value="duration-asc" {{if eq .Sort "duration-asc"}}selected{{end}}>Duration (Short)</option>
+                <option value="duration-desc" {{if eq .Sort "duration-desc"}}selected{{end}}>Duration (Long)</option>
             </select>
         </div>
 
