@@ -179,6 +179,21 @@ type ItemsResponse struct {
 	Include   string        `json:"include"`
 }
 
+// SearchResponse represents the response from a library search.
+type SearchResponse struct {
+	Book      []SearchBookResult `json:"book"`
+	Narrators []interface{}      `json:"narrators"`
+	Tags      []interface{}      `json:"tags"`
+	Genres    []interface{}      `json:"genres"`
+	Series    []interface{}      `json:"series"`
+	Authors   []interface{}      `json:"authors"`
+}
+
+// SearchBookResult represents a single book result from search.
+type SearchBookResult struct {
+	LibraryItem LibraryItem `json:"libraryItem"`
+}
+
 // FilterData represents the filter data for a library.
 type FilterData struct {
 	Authors    []FilterAuthor    `json:"authors"`

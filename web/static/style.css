@@ -66,9 +66,19 @@ button {
 }
 
 .logo {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--primary);
+    display: flex;
+    align-items: center;
+}
+
+.logo .logo-img {
+    height: 32px;
+    width: auto;
+    display: block;
+}
+
+/* Dark theme is default - show dark logo, hide light logo */
+.logo .logo-img.logo-light {
+    display: none;
 }
 
 .user-menu {
@@ -703,8 +713,8 @@ button {
         padding: 0.5rem 1rem;
     }
 
-    .logo {
-        font-size: 1rem;
+    .logo-img {
+        height: 28px;
     }
 
     .items-toolbar {

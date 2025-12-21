@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"audiobookshelf-sonos-bridge/internal/abs"
@@ -95,7 +96,7 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 	query := r.URL.Query().Get("q")
 	sort := r.URL.Query().Get("sort")
 	if sort == "" {
-		sort = "title"
+		sort = "title-asc"
 	}
 	view := r.URL.Query().Get("view")
 	if view == "" {
@@ -110,32 +111,48 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
 	// Map sort parameter to ABS sort field
+	// Format: "field-direction" (e.g., "title-asc", "added-desc")
 	sortField := "media.metadata.title"
 	sortDesc := false
-	switch sort {
+
+	// Parse sort parameter
+	sortParts := strings.Split(sort, "-")
+	sortType := sortParts[0]
+	if len(sortParts) > 1 && sortParts[len(sortParts)-1] == "desc" {
+		sortDesc = true
+	}
+
+	switch sortType {
 	case "title":
 		sortField = "media.metadata.title"
 	case "author":
 		sortField = "media.metadata.authorName"
 	case "recent":
 		sortField = "progress"
-		sortDesc = true
 	case "added":
 		sortField = "addedAt"
-		sortDesc = true
+	case "duration":
+		sortField = "media.duration"
 	}
 
-	// Fetch items
-	opts := abs.ItemsOptions{
-		Limit:   limit,
-		Page:    offset / limit,
-		Sort:    sortField,
-		Desc:    sortDesc,
-		Search:  query,
-		Include: "progress",
+	// Fetch items - use search endpoint if there's a query
+	var itemsResp *abs.ItemsResponse
+
+	if query != "" {
+		// Use dedicated search endpoint for text queries
+		itemsResp, err = absClient.SearchLibrary(ctx, libraryID, query, limit)
+	} else {
+		// Use regular items endpoint with sorting/filtering
+		opts := abs.ItemsOptions{
+			Limit:   limit,
+			Page:    offset / limit,
+			Sort:    sortField,
+			Desc:    sortDesc,
+			Include: "progress",
+		}
+		itemsResp, err = absClient.GetLibraryItems(ctx, libraryID, opts)
 	}
 
-	itemsResp, err := absClient.GetLibraryItems(ctx, libraryID, opts)
 	if err != nil {
 		if err == abs.ErrUnauthorized {
 			http.Redirect(w, r, "/login?error=session_expired", http.StatusSeeOther)

@@ -9,16 +9,20 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="ABS Sonos">
     <link rel="manifest" href="/static/manifest.json">
-    <link rel="apple-touch-icon" href="/static/icon-192.png">
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <link rel="apple-touch-icon" href="/static/audiobookshelf-bridge-WebApp-Icon.png">
     <title>{{if .Title}}{{.Title}} - {{end}}Audiobookshelf Sonos Bridge</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2">
     <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
     {{if .ShowHeader}}
     <header class="header">
         <div class="header-content">
-            <a href="/libraries" class="logo">Audiobookshelf</a>
+            <a href="/libraries" class="logo">
+                <img src="/static/Audiobookshelf-bridge-logo-dark.png" alt="Audiobookshelf Sonos Bridge" class="logo-img logo-dark">
+                <img src="/static/Audiobookshelf-bridge-logo-light.png" alt="Audiobookshelf Sonos Bridge" class="logo-img logo-light">
+            </a>
             {{if .Username}}
             <div class="header-actions">
                 <button type="button" id="sonos-picker-toggle" class="btn btn-icon" title="Select Sonos Device" onclick="toggleSonosPicker()">

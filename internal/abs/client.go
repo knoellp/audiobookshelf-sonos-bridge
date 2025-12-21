@@ -175,6 +175,32 @@ func (c *Client) GetLibraryItems(ctx context.Context, libraryID string, opts Ite
 	return &resp, nil
 }
 
+// SearchLibrary searches a library for items matching the query.
+func (c *Client) SearchLibrary(ctx context.Context, libraryID, query string, limit int) (*ItemsResponse, error) {
+	path := fmt.Sprintf("/api/libraries/%s/search?q=%s", libraryID, url.QueryEscape(query))
+	if limit > 0 {
+		path += fmt.Sprintf("&limit=%d", limit)
+	}
+
+	var resp SearchResponse
+	if err := c.get(ctx, path, &resp); err != nil {
+		return nil, err
+	}
+
+	// Convert search results to ItemsResponse format
+	items := make([]LibraryItem, 0, len(resp.Book))
+	for _, result := range resp.Book {
+		items = append(items, result.LibraryItem)
+	}
+
+	return &ItemsResponse{
+		Results: items,
+		Total:   len(items),
+		Limit:   limit,
+		Page:    0,
+	}, nil
+}
+
 // GetFilterData returns filter data for a library.
 func (c *Client) GetFilterData(ctx context.Context, libraryID string) (*FilterData, error) {
 	path := fmt.Sprintf("/api/libraries/%s/filterdata", libraryID)
