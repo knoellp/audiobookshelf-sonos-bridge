@@ -1,0 +1,117 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bridge
+abs-sonos-bridge
+*.out
+
+# Local run scripts (use Docker!)
+run.sh
+
+# Build directories
+/dist/
+/build/
+/bin/
+
+# Go test binary
+*.test
+
+# Go coverage files
+*.cover
+coverage.txt
+coverage.html
+coverage.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependency directories
+/vendor/
+
+# IDE and editor files
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Local development
+/dev/
+/tmp/
+
+# Cache and config volumes (for local development)
+/cache/
+/config/
+
+# Database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Temporary files
+*.tmp
+*.temp
+
+# Profiling
+*.prof
+*.pprof
+
+# Debug
+debug
+__debug_bin*
+
+# Test credentials (sensitive)
+.test-credentials
+
+# Node.js (for E2E tests)
+node_modules/
+package.json
+package-lock.json
+
+# Playwright MCP
+.playwright-mcp/
+
+# Test results
+test-results/
+
+# Local data directory (cache/config for Docker)
+/data/
+
+# Large binary downloads
+*.deb
+*.rpm
+*.dmg
+*.pkg
+
+# E2E test files (local testing only)
+e2e-test*.js
+
+# Claude Code / Speckit tooling (not project-specific)
+.claude/
+.specify/

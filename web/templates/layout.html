@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="Audiobookshelf Sonos Bridge">
+    <meta name="theme-color" content="#121212">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="ABS Sonos">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icon-192.png">
+    <title>{{if .Title}}{{.Title}} - {{end}}Audiobookshelf Sonos Bridge</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+    {{if .ShowHeader}}
+    <header class="header">
+        <div class="header-content">
+            <a href="/libraries" class="logo">Audiobookshelf</a>
+            {{if .Username}}
+            <div class="header-actions">
+                <button type="button" id="sonos-picker-toggle" class="btn btn-icon" title="Select Sonos Device" onclick="toggleSonosPicker()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
+                        <circle cx="12" cy="14" r="4"></circle>
+                        <line x1="12" y1="6" x2="12.01" y2="6"></line>
+                    </svg>
+                    <span id="selected-device-name" class="device-badge"></span>
+                </button>
+                <div class="user-menu">
+                    <span class="username">{{.Username}}</span>
+                    <form action="/auth/logout" method="POST" class="logout-form">
+                        <button type="submit" class="btn btn-link">Logout</button>
+                    </form>
+                </div>
+            </div>
+            {{end}}
+        </div>
+    </header>
+    <!-- Sonos Device Picker Modal -->
+    <div id="sonos-picker-modal" class="modal" style="display: none;">
+        <div class="modal-backdrop" onclick="toggleSonosPicker()"></div>
+        <div class="modal-content">
+            {{template "sonos-picker" .}}
+        </div>
+    </div>
+    <script>
+    function toggleSonosPicker() {
+        const modal = document.getElementById('sonos-picker-modal');
+        modal.style.display = modal.style.display === 'none' ? 'flex' : 'none';
+    }
+    // Update device badge on selection
+    document.addEventListener('sonosDeviceSelected', function(e) {
+        const btn = document.getElementById('sonos-picker-toggle');
+        btn.dataset.sonosUuid = e.detail.uuid;
+        document.getElementById('selected-device-name').textContent = e.detail.name;
+        toggleSonosPicker();
+    });
+    // Restore saved device name and UUID on load
+    document.addEventListener('DOMContentLoaded', function() {
+        const savedName = localStorage.getItem('selectedSonosName');
+        const savedUUID = localStorage.getItem('selectedSonosUUID');
+        if (savedName) {
+            document.getElementById('selected-device-name').textContent = savedName;
+        }
+        if (savedUUID) {
+            const btn = document.getElementById('sonos-picker-toggle');
+            if (btn) btn.dataset.sonosUuid = savedUUID;
+        }
+    });
+    </script>
+    {{end}}
+
+    <main class="main-content">
+        {{block "content" .}}{{end}}
+    </main>
+
+    {{if .ShowFooter}}
+    <footer class="footer">
+        <p>Audiobookshelf Sonos Bridge</p>
+    </footer>
+    {{end}}
+</body>
+</html>

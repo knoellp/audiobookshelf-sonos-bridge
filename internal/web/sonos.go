@@ -1,0 +1,122 @@
+package web
+
+import (
+	"context"
+	"html/template"
+	"net/http"
+	"time"
+
+	"audiobookshelf-sonos-bridge/internal/sonos"
+)
+
+// SonosHandler handles Sonos-related HTTP requests.
+type SonosHandler struct {
+	discovery *sonos.Discovery
+	templates *template.Template
+}
+
+// NewSonosHandler creates a new Sonos handler.
+func NewSonosHandler(discovery *sonos.Discovery, templates *template.Template) *SonosHandler {
+	return &SonosHandler{
+		discovery: discovery,
+		templates: templates,
+	}
+}
+
+// HandleGetDevices returns the list of Sonos devices as HTML for htmx.
+// If no devices are in the store, it triggers automatic discovery.
+func (h *SonosHandler) HandleGetDevices(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	devices, err := h.discovery.GetDevices()
+	if err != nil {
+		http.Error(w, "Failed to get devices", http.StatusInternalServerError)
+		return
+	}
+
+	// If no devices found, trigger discovery automatically
+	if len(devices) == 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		discoveredDevices, err := h.discovery.Discover(ctx, 5*time.Second)
+		if err == nil && len(discoveredDevices) > 0 {
+			// Refresh devices from store after discovery
+			devices, _ = h.discovery.GetDevices()
+		}
+	}
+
+	// Convert to template format
+	deviceList := make([]DeviceResponse, len(devices))
+	for i, d := range devices {
+		deviceList[i] = DeviceResponse{
+			UUID:        d.UUID,
+			Name:        d.Name,
+			IPAddress:   d.IPAddress,
+			Model:       d.Model,
+			IsReachable: d.IsReachable,
+		}
+	}
+
+	// Render HTML template for htmx
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := map[string]interface{}{
+		"Devices": deviceList,
+	}
+	if err := h.templates.ExecuteTemplate(w, "sonos-device-list", data); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+	}
+}
+
+// HandleRefreshDevices triggers a new device discovery and returns updated HTML.
+func (h *SonosHandler) HandleRefreshDevices(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Perform discovery
+	devices, err := h.discovery.Discover(ctx, 5*time.Second)
+	if err != nil {
+		http.Error(w, "Discovery failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to template format
+	deviceList := make([]DeviceResponse, len(devices))
+	for i, d := range devices {
+		deviceList[i] = DeviceResponse{
+			UUID:        d.UUID,
+			Name:        d.Name,
+			IPAddress:   d.IPAddress,
+			Model:       d.Model,
+			IsReachable: d.IsReachable,
+		}
+	}
+
+	// Render HTML template for htmx
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := map[string]interface{}{
+		"Devices": deviceList,
+	}
+	if err := h.templates.ExecuteTemplate(w, "sonos-device-list", data); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+	}
+}
+
+// DeviceResponse is the API response for a Sonos device.
+type DeviceResponse struct {
+	UUID        string `json:"uuid"`
+	Name        string `json:"name"`
+	IPAddress   string `json:"ip_address"`
+	Model       string `json:"model"`
+	IsReachable bool   `json:"is_reachable"`
+}

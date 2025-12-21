@@ -1,0 +1,975 @@
+/* Base Variables */
+:root {
+    --primary: #1db954;
+    --primary-dark: #1aa34a;
+    --bg: #121212;
+    --bg-elevated: #1e1e1e;
+    --bg-card: #282828;
+    --text: #ffffff;
+    --text-secondary: #b3b3b3;
+    --text-muted: #6a6a6a;
+    --border: #333333;
+    --error: #e74c3c;
+    --success: #27ae60;
+    --radius: 8px;
+    --radius-sm: 4px;
+    --shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+    --transition: 150ms ease;
+}
+
+/* Reset */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+/* Base */
+html {
+    font-size: 16px;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+}
+
+button {
+    font-family: inherit;
+    cursor: pointer;
+}
+
+/* Header */
+.header {
+    background-color: var(--bg-elevated);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.header-content {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0.75rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.user-menu {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.username {
+    color: var(--text-secondary);
+}
+
+.logout-form {
+    display: inline;
+}
+
+/* Main Content */
+.main-content {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all var(--transition);
+    gap: 0.5rem;
+}
+
+.btn-primary {
+    background-color: var(--primary);
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: var(--primary-dark);
+}
+
+.btn-secondary {
+    background-color: var(--bg-card);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+    background-color: var(--border);
+}
+
+.btn-link {
+    background: none;
+    color: var(--text-secondary);
+    padding: 0.25rem;
+}
+
+.btn-link:hover {
+    color: var(--text);
+}
+
+.btn-icon {
+    padding: 0.5rem;
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-secondary);
+}
+
+.btn-icon:hover, .btn-icon.active {
+    color: var(--text);
+    border-color: var(--border);
+}
+
+.btn-block {
+    width: 100%;
+}
+
+/* Forms */
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-card);
+    color: var(--text);
+    font-size: 1rem;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+/* Alerts */
+.alert {
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-sm);
+    margin-bottom: 1rem;
+}
+
+.alert-error {
+    background-color: rgba(231, 76, 60, 0.2);
+    border: 1px solid var(--error);
+    color: #ff6b6b;
+}
+
+/* Login */
+.login-container {
+    min-height: calc(100vh - 4rem);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+}
+
+.login-card {
+    background-color: var(--bg-elevated);
+    border-radius: var(--radius);
+    padding: 2rem;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: var(--shadow);
+}
+
+.login-card h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.login-subtitle {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+
+.login-form {
+    margin-top: 1.5rem;
+}
+
+/* Library List */
+.library-container {
+    padding: 1rem 0;
+}
+
+.library-container h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.subtitle {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+
+.library-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+}
+
+.library-card {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background-color: var(--bg-card);
+    border-radius: var(--radius);
+    transition: all var(--transition);
+}
+
+.library-card:hover {
+    background-color: var(--border);
+    transform: translateY(-2px);
+}
+
+.library-icon {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--primary);
+    border-radius: var(--radius-sm);
+    color: white;
+}
+
+.library-info {
+    flex: 1;
+}
+
+.library-name {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.library-type {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    text-transform: capitalize;
+}
+
+/* Items View */
+.items-container {
+    padding: 1rem 0;
+}
+
+.items-header {
+    margin-bottom: 1.5rem;
+}
+
+.breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.breadcrumb a:hover {
+    color: var(--text);
+}
+
+.separator {
+    color: var(--text-muted);
+}
+
+.items-header h1 {
+    font-size: 1.5rem;
+}
+
+.items-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background-color: var(--bg-elevated);
+    border-radius: var(--radius);
+}
+
+.search-box {
+    flex: 1;
+    min-width: 200px;
+}
+
+.search-box input {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-card);
+    color: var(--text);
+}
+
+.sort-controls select {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-card);
+    color: var(--text);
+}
+
+.view-toggle {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.items-count {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+/* Items Grid */
+.items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 1rem;
+}
+
+.items-grid.list-view {
+    grid-template-columns: 1fr;
+}
+
+.item-card {
+    background-color: var(--bg-card);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: all var(--transition);
+}
+
+.item-card:hover {
+    background-color: var(--border);
+    transform: translateY(-4px);
+    box-shadow: var(--shadow);
+}
+
+.item-link {
+    display: block;
+}
+
+.item-cover {
+    position: relative;
+    aspect-ratio: 1;
+    background-color: var(--bg-elevated);
+}
+
+.item-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.item-cover-fallback {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+}
+
+.progress-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.progress-fill {
+    height: 100%;
+    background-color: var(--primary);
+}
+
+.item-info {
+    padding: 0.75rem;
+}
+
+.item-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 0.25rem;
+}
+
+.item-author {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 0.25rem;
+}
+
+.item-duration {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* List View */
+.list-view .item-card {
+    display: flex;
+    align-items: center;
+}
+
+.list-view .item-link {
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.list-view .item-cover {
+    width: 60px;
+    height: 60px;
+    aspect-ratio: 1;
+    flex-shrink: 0;
+}
+
+.list-view .item-info {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.list-view .item-title {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.list-view .item-author {
+    width: 200px;
+    margin-bottom: 0;
+}
+
+.list-view .item-duration {
+    width: 80px;
+    text-align: right;
+}
+
+/* Load More */
+.load-more {
+    display: flex;
+    justify-content: center;
+    padding: 2rem 0;
+}
+
+/* Empty State */
+.empty-state {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-secondary);
+}
+
+/* Footer */
+.footer {
+    text-align: center;
+    padding: 2rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+/* Touch-friendly defaults */
+@media (pointer: coarse) {
+    .btn,
+    button {
+        min-height: 44px;
+        min-width: 44px;
+    }
+
+    .form-group input,
+    .form-group select {
+        min-height: 44px;
+        font-size: 16px; /* Prevents iOS zoom on focus */
+    }
+
+    .search-box input {
+        min-height: 44px;
+        font-size: 16px;
+    }
+}
+
+/* Sonos Picker */
+.sonos-picker {
+    background-color: var(--bg-elevated);
+    border-radius: var(--radius);
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.sonos-picker h3 {
+    font-size: 1rem;
+    margin-bottom: 1rem;
+}
+
+.sonos-devices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.sonos-device {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background-color: var(--bg-card);
+    border: 2px solid transparent;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.sonos-device:hover {
+    background-color: var(--border);
+}
+
+.sonos-device.selected {
+    border-color: var(--primary);
+    background-color: rgba(29, 185, 84, 0.1);
+}
+
+.sonos-device-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--bg);
+    border-radius: 50%;
+    color: var(--text-secondary);
+}
+
+.sonos-device-name {
+    flex: 1;
+    font-weight: 500;
+}
+
+.sonos-device-room {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.no-devices {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 2rem;
+}
+
+/* Play Button Overlay */
+.item-play-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    transition: opacity var(--transition);
+}
+
+.item-card:hover .item-play-overlay {
+    opacity: 1;
+}
+
+.play-button {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--primary);
+    border-radius: 50%;
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: transform var(--transition);
+}
+
+.play-button:hover {
+    transform: scale(1.1);
+}
+
+/* Cache Status Badge */
+.cache-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.625rem;
+    font-weight: 600;
+    border-radius: 2px;
+    text-transform: uppercase;
+}
+
+.cache-badge.cached {
+    background-color: var(--success);
+    color: white;
+}
+
+.cache-badge.caching {
+    background-color: #f39c12;
+    color: white;
+}
+
+/* Loading Spinner */
+.spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    z-index: 1000;
+}
+
+.loading-text {
+    color: var(--text);
+    font-size: 1rem;
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+    .header-content {
+        padding: 0.5rem 1rem;
+    }
+
+    .logo {
+        font-size: 1rem;
+    }
+
+    .items-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+        padding: 0.75rem;
+    }
+
+    .search-box {
+        min-width: 100%;
+    }
+
+    .sort-controls {
+        width: 100%;
+    }
+
+    .sort-controls select {
+        width: 100%;
+    }
+
+    .view-toggle {
+        justify-content: flex-end;
+    }
+
+    .items-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+
+    .list-view .item-info {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+    }
+
+    .list-view .item-author,
+    .list-view .item-duration {
+        width: auto;
+        text-align: left;
+    }
+
+    .library-list {
+        grid-template-columns: 1fr;
+    }
+
+    .library-card {
+        padding: 1rem;
+    }
+
+    /* Sonos picker mobile */
+    .sonos-device {
+        padding: 1rem;
+    }
+
+    .sonos-device-icon {
+        width: 48px;
+        height: 48px;
+    }
+}
+
+@media (max-width: 480px) {
+    .main-content {
+        padding: 0.5rem;
+    }
+
+    .items-header h1 {
+        font-size: 1.25rem;
+    }
+
+    .items-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.5rem;
+    }
+
+    .item-info {
+        padding: 0.5rem;
+    }
+
+    .item-title {
+        font-size: 0.8rem;
+    }
+
+    .item-author,
+    .item-duration {
+        font-size: 0.7rem;
+    }
+
+    .play-button {
+        width: 40px;
+        height: 40px;
+    }
+
+    /* Touch-friendly improvements */
+    .btn {
+        padding: 0.75rem 1rem;
+    }
+
+    .user-menu {
+        gap: 0.5rem;
+    }
+
+    .username {
+        display: none;
+    }
+}
+
+/* Landscape phone */
+@media (max-width: 768px) and (orientation: landscape) {
+    .items-grid {
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    }
+
+    .library-list {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* Safe areas for notched devices */
+@supports (padding: max(0px)) {
+    .header {
+        padding-left: max(1rem, env(safe-area-inset-left));
+        padding-right: max(1rem, env(safe-area-inset-right));
+    }
+
+    .main-content {
+        padding-left: max(1rem, env(safe-area-inset-left));
+        padding-right: max(1rem, env(safe-area-inset-right));
+        padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    }
+}
+
+/* Modal */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.modal-content {
+    position: relative;
+    background: var(--bg-elevated);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow);
+    min-width: 320px;
+}
+
+/* Header Actions */
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.device-badge {
+    font-size: 0.75rem;
+    margin-left: 0.5rem;
+    color: var(--text-secondary);
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Sonos Picker */
+.sonos-picker {
+    min-width: 280px;
+}
+
+.sonos-picker-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+
+.sonos-picker-header h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.sonos-device-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.device-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.device-card {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-card);
+    border: 2px solid transparent;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all var(--transition);
+    width: 100%;
+    text-align: left;
+}
+
+.device-card:hover {
+    background: var(--bg);
+}
+
+.device-card.selected {
+    border-color: var(--primary);
+}
+
+.device-card.unreachable {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.device-icon {
+    color: var(--text-secondary);
+}
+
+.device-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.device-name {
+    font-weight: 500;
+}
+
+.device-model {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.device-status {
+    font-size: 0.75rem;
+    color: var(--error);
+}
+
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator {
+    display: inline;
+}

@@ -1,0 +1,761 @@
+{{define "transport"}}
+<div class="transport-controls">
+    <!-- Current Chapter Display -->
+    {{if and .Item .Item.Media.Chapters}}
+    <div class="current-chapter" id="current-chapter">
+        <span class="chapter-number-display" id="chapter-number">--</span>
+        <span class="chapter-title" id="chapter-title"></span>
+    </div>
+    {{end}}
+
+    <!-- Progress Bar with Chapters -->
+    <div class="progress-container">
+        <span class="time" id="position">{{if .Playback}}{{.Playback.PositionSec | formatDuration}}{{else}}0:00{{end}}</span>
+        <div class="progress-wrapper">
+            <input type="range"
+                   id="progress-slider"
+                   class="progress-slider"
+                   min="0"
+                   max="{{if .Playback}}{{.Playback.DurationSec}}{{else}}0{{end}}"
+                   value="{{if .Playback}}{{.Playback.PositionSec}}{{else}}0{{end}}"
+                   oninput="onProgressChange(this.value)"
+                   onchange="onProgressSeek(this.value)">
+            <!-- Chapter markers -->
+            <div class="chapter-markers" id="chapter-markers"></div>
+        </div>
+        <span class="time" id="duration">{{if .Playback}}{{.Playback.DurationSec | formatDuration}}{{else}}0:00{{end}}</span>
+        <input type="hidden" id="progress-input" value="{{if .Playback}}{{.Playback.PositionSec}}{{else}}0{{end}}">
+        <input type="hidden" id="duration-input" value="{{if .Playback}}{{.Playback.DurationSec}}{{else}}0{{end}}">
+    </div>
+
+    <!-- Chapter List (collapsible) -->
+    {{if and .Item .Item.Media.Chapters}}
+    <div class="chapter-list-container">
+        <button type="button" class="chapter-toggle" id="chapter-toggle" onclick="toggleChapterList()">
+            <span>Kapitel anzeigen</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="chapter-arrow">
+                <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+        </button>
+        <div class="chapter-list" id="chapter-list" style="display: none;">
+            {{range $i, $ch := .Item.Media.Chapters}}
+            <button type="button" class="chapter-item" data-start="{{$ch.Start}}" onclick="seekToChapter({{$ch.Start}})">
+                <span class="chapter-number">{{$i | plus1}}</span>
+                <span class="chapter-name">{{$ch.Title}}</span>
+            </button>
+            {{end}}
+        </div>
+    </div>
+    {{end}}
+
+    <!-- Store chapters as JSON for JavaScript -->
+    <script id="chapters-data" type="application/json">
+    {{if and .Item .Item.Media.Chapters}}{{.Item.Media.Chapters | json}}{{else}}[]{{end}}
+    </script>
+
+    <div class="transport-buttons">
+        {{if and .Item .Item.Media.Chapters}}
+        <button type="button" class="transport-btn chapter-skip-btn" id="prev-chapter-btn" onclick="skipToPrevChapter()" title="Vorheriges Kapitel">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <rect x="3" y="5" width="3" height="14"></rect>
+                <polygon points="21 5 21 19 9 12 21 5"></polygon>
+            </svg>
+        </button>
+        {{end}}
+
+        <button type="button" class="transport-btn" onclick="skip(-12)" title="12 Sekunden zurück">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                <path d="M3 3v5h5"></path>
+                <text x="12" y="15" font-size="6" text-anchor="middle" fill="currentColor" stroke="none">12</text>
+            </svg>
+        </button>
+
+        <button type="button" class="transport-btn play-btn" id="play-btn" onclick="resume()" title="Play" {{if and .Playback .Playback.IsPlaying}}style="display:none"{{end}}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+        </button>
+
+        <button type="button" class="transport-btn pause-btn" id="pause-btn" onclick="pause()" title="Pause" {{if or (not .Playback) (not .Playback.IsPlaying)}}style="display:none"{{end}}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <rect x="6" y="4" width="4" height="16"></rect>
+                <rect x="14" y="4" width="4" height="16"></rect>
+            </svg>
+        </button>
+
+        <button type="button" class="transport-btn" onclick="skip(12)" title="12 Sekunden vor">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                <path d="M21 3v5h-5"></path>
+                <text x="12" y="15" font-size="6" text-anchor="middle" fill="currentColor" stroke="none">12</text>
+            </svg>
+        </button>
+
+        {{if and .Item .Item.Media.Chapters}}
+        <button type="button" class="transport-btn chapter-skip-btn" id="next-chapter-btn" onclick="skipToNextChapter()" title="Nächstes Kapitel">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <polygon points="3 5 3 19 15 12 3 5"></polygon>
+                <rect x="18" y="5" width="3" height="14"></rect>
+            </svg>
+        </button>
+        {{end}}
+    </div>
+
+    <div class="volume-controls">
+        <button type="button" class="volume-btn" id="mute-btn" onclick="toggleMute()" title="Mute/Unmute">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="volume-icon">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="mute-icon" style="display:none">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <line x1="23" y1="9" x2="17" y2="15"></line>
+                <line x1="17" y1="9" x2="23" y2="15"></line>
+            </svg>
+        </button>
+        <input type="range"
+               id="volume-slider"
+               class="volume-slider"
+               min="0"
+               max="100"
+               value="50"
+               oninput="onVolumeChange(this.value)"
+               onchange="setVolume(this.value)">
+        <span class="volume-value" id="volume-value">50%</span>
+    </div>
+
+    <div class="transport-secondary">
+        <button type="button" class="transport-btn-secondary" onclick="stop()" title="Stop">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+            </svg>
+            Stop
+        </button>
+    </div>
+</div>
+
+<script>
+// Progress/seek control
+let seekAdjusting = false;
+let seekAdjustTimeout;
+let chapters = [];
+
+// Initialize chapters from JSON data
+document.addEventListener('DOMContentLoaded', function() {
+    const chaptersData = document.getElementById('chapters-data');
+    if (chaptersData) {
+        try {
+            chapters = JSON.parse(chaptersData.textContent.trim());
+            renderChapterMarkers();
+            // Initialize current chapter display with current position
+            const initialPosition = parseInt(document.getElementById('progress-input').value) || 0;
+            updateCurrentChapterDisplay(initialPosition);
+        } catch (e) {
+            console.error('Failed to parse chapters:', e);
+        }
+    }
+});
+
+function renderChapterMarkers() {
+    const markers = document.getElementById('chapter-markers');
+    const duration = parseInt(document.getElementById('duration-input').value);
+    if (!markers || !duration || chapters.length === 0) return;
+
+    markers.innerHTML = '';
+    chapters.forEach((ch, i) => {
+        if (i === 0) return; // Skip first chapter (start)
+        const percent = (ch.start / duration) * 100;
+        const marker = document.createElement('div');
+        marker.className = 'chapter-marker';
+        marker.style.left = percent + '%';
+        marker.title = ch.title;
+        marker.onclick = (e) => {
+            e.stopPropagation();
+            seekToChapter(ch.start);
+        };
+        markers.appendChild(marker);
+    });
+}
+
+function getCurrentChapterWithIndex(positionSec) {
+    if (!chapters || chapters.length === 0) return { chapter: null, index: -1 };
+    for (let i = chapters.length - 1; i >= 0; i--) {
+        if (positionSec >= chapters[i].start) {
+            return { chapter: chapters[i], index: i };
+        }
+    }
+    return { chapter: chapters[0], index: 0 };
+}
+
+function updateCurrentChapterDisplay(positionSec) {
+    const numberEl = document.getElementById('chapter-number');
+    const titleEl = document.getElementById('chapter-title');
+    if (!numberEl && !titleEl) return;
+
+    const { chapter, index } = getCurrentChapterWithIndex(positionSec);
+    if (chapter) {
+        // Show chapter number (1-based)
+        if (numberEl) {
+            numberEl.textContent = (index + 1) + ' / ' + chapters.length;
+        }
+        // Show title if it's not just a generic "Chapter X" / "Kapitel X" pattern
+        if (titleEl) {
+            const title = chapter.title || '';
+            // Check if title is just a number pattern like "Kapitel 5" or "Chapter 5"
+            const isGenericTitle = /^(kapitel|chapter|teil|part|abschnitt|section)\s*\d+$/i.test(title.trim());
+            if (title && !isGenericTitle) {
+                titleEl.textContent = title;
+                titleEl.style.display = 'inline';
+            } else {
+                titleEl.textContent = '';
+                titleEl.style.display = 'none';
+            }
+        }
+    }
+}
+
+function onProgressChange(value) {
+    // User is dragging - set flag to prevent status updates
+    seekAdjusting = true;
+    clearTimeout(seekAdjustTimeout);
+    // Update time display immediately
+    document.getElementById('position').textContent = formatSecondsDisplay(parseInt(value));
+    updateCurrentChapterDisplay(parseInt(value));
+}
+
+function onProgressSeek(value) {
+    // User released slider - seek to position
+    seek(parseInt(value));
+    // Reset flag after delay
+    clearTimeout(seekAdjustTimeout);
+    seekAdjustTimeout = setTimeout(() => {
+        seekAdjusting = false;
+    }, 1500);
+}
+
+function seekToChapter(startSec) {
+    seek(Math.round(startSec));
+}
+
+function getCurrentChapterIndex(positionSec) {
+    if (!chapters || chapters.length === 0) return -1;
+    for (let i = chapters.length - 1; i >= 0; i--) {
+        if (positionSec >= chapters[i].start) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+function skipToPrevChapter() {
+    if (!chapters || chapters.length === 0) return;
+
+    const currentPosition = parseInt(document.getElementById('progress-slider').value) || 0;
+    const currentIndex = getCurrentChapterIndex(currentPosition);
+
+    // If we're more than 3 seconds into the current chapter, go to start of current chapter
+    // Otherwise go to previous chapter
+    const currentChapterStart = chapters[currentIndex]?.start || 0;
+    const secondsIntoChapter = currentPosition - currentChapterStart;
+
+    if (secondsIntoChapter > 3 && currentIndex >= 0) {
+        // Go to start of current chapter
+        seekToChapter(currentChapterStart);
+    } else if (currentIndex > 0) {
+        // Go to previous chapter
+        seekToChapter(chapters[currentIndex - 1].start);
+    } else {
+        // Already at first chapter, go to start
+        seekToChapter(0);
+    }
+}
+
+function skipToNextChapter() {
+    if (!chapters || chapters.length === 0) return;
+
+    const currentPosition = parseInt(document.getElementById('progress-slider').value) || 0;
+    const currentIndex = getCurrentChapterIndex(currentPosition);
+
+    if (currentIndex < chapters.length - 1) {
+        // Go to next chapter
+        seekToChapter(chapters[currentIndex + 1].start);
+    }
+    // If at last chapter, do nothing (or could go to end)
+}
+
+function toggleChapterList() {
+    const list = document.getElementById('chapter-list');
+    const arrow = document.getElementById('chapter-arrow');
+    const toggle = document.getElementById('chapter-toggle');
+    if (list.style.display === 'none') {
+        list.style.display = 'block';
+        arrow.style.transform = 'rotate(180deg)';
+        toggle.querySelector('span').textContent = 'Kapitel ausblenden';
+    } else {
+        list.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+        toggle.querySelector('span').textContent = 'Kapitel anzeigen';
+    }
+}
+
+function formatSecondsDisplay(sec) {
+    const hours = Math.floor(sec / 3600);
+    const minutes = Math.floor((sec % 3600) / 60);
+    const seconds = Math.floor(sec % 60);
+    if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+// Update progress slider from status (called from player.html updateStatus)
+function updateProgressUI(positionSec, durationSec) {
+    if (seekAdjusting) return; // Don't update while user is dragging
+
+    const slider = document.getElementById('progress-slider');
+    if (slider) {
+        slider.max = durationSec;
+        slider.value = positionSec;
+    }
+    document.getElementById('progress-input').value = positionSec;
+    document.getElementById('duration-input').value = durationSec;
+    updateCurrentChapterDisplay(positionSec);
+}
+
+// Volume control functions
+let volumeDebounceTimer;
+let volumeAdjusting = false;  // Flag to prevent status updates from overwriting slider
+let volumeAdjustTimeout;
+
+function onVolumeChange(value) {
+    // User is adjusting - set flag to prevent status updates from overwriting
+    volumeAdjusting = true;
+    clearTimeout(volumeAdjustTimeout);
+    // Update display immediately
+    document.getElementById('volume-value').textContent = value + '%';
+}
+
+function setVolume(value) {
+    // Debounce to avoid spamming the server
+    clearTimeout(volumeDebounceTimer);
+    volumeDebounceTimer = setTimeout(() => {
+        const params = new URLSearchParams();
+        params.append('volume', value);
+        fetch('/transport/volume', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params.toString()
+        }).then(() => {
+            // Reset flag after a delay to allow Sonos to update
+            clearTimeout(volumeAdjustTimeout);
+            volumeAdjustTimeout = setTimeout(() => {
+                volumeAdjusting = false;
+            }, 1500);
+        }).catch(err => {
+            console.error('Failed to set volume:', err);
+            volumeAdjusting = false;
+        });
+    }, 100);
+}
+
+async function toggleMute() {
+    try {
+        const response = await fetch('/transport/mute', {
+            method: 'POST'
+        });
+        if (response.ok) {
+            const data = await response.json();
+            updateMuteUI(data.muted);
+        }
+    } catch (err) {
+        console.error('Failed to toggle mute:', err);
+    }
+}
+
+function updateMuteUI(muted) {
+    const volumeIcon = document.getElementById('volume-icon');
+    const muteIcon = document.getElementById('mute-icon');
+    if (muted) {
+        volumeIcon.style.display = 'none';
+        muteIcon.style.display = 'block';
+    } else {
+        volumeIcon.style.display = 'block';
+        muteIcon.style.display = 'none';
+    }
+}
+
+function updateVolumeUI(volume, muted) {
+    // Skip volume update if user is currently adjusting
+    if (volumeAdjusting) {
+        // Only update mute state
+        if (muted !== undefined) {
+            updateMuteUI(muted);
+        }
+        return;
+    }
+
+    const slider = document.getElementById('volume-slider');
+    const valueDisplay = document.getElementById('volume-value');
+    if (slider && volume !== undefined) {
+        slider.value = volume;
+        valueDisplay.textContent = volume + '%';
+    }
+    if (muted !== undefined) {
+        updateMuteUI(muted);
+    }
+}
+</script>
+
+<style>
+.transport-controls {
+    width: 100%;
+    max-width: 400px;
+}
+
+/* Current Chapter Display */
+.current-chapter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.chapter-number-display {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.chapter-title {
+    color: var(--text);
+    font-weight: 600;
+    font-size: 0.9rem;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Progress Container */
+.progress-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.time {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    min-width: 50px;
+}
+
+.time:first-of-type {
+    text-align: right;
+}
+
+/* Progress Slider Wrapper */
+.progress-wrapper {
+    flex: 1;
+    position: relative;
+    height: 20px;
+    display: flex;
+    align-items: center;
+}
+
+.progress-slider {
+    width: 100%;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bg-card);
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+}
+
+.progress-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    transition: transform 0.1s;
+}
+
+.progress-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.progress-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+/* Chapter Markers */
+.chapter-markers {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 6px;
+    transform: translateY(-50%);
+    pointer-events: none;
+}
+
+.chapter-marker {
+    position: absolute;
+    width: 2px;
+    height: 12px;
+    background: var(--text-muted);
+    transform: translateX(-50%) translateY(-3px);
+    cursor: pointer;
+    pointer-events: auto;
+    opacity: 0.6;
+    transition: opacity 0.2s, height 0.2s;
+}
+
+.chapter-marker:hover {
+    opacity: 1;
+    height: 16px;
+}
+
+/* Chapter List */
+.chapter-list-container {
+    margin-bottom: 1.5rem;
+}
+
+.chapter-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.5rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+}
+
+.chapter-toggle:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+}
+
+.chapter-toggle svg {
+    transition: transform 0.2s;
+}
+
+.chapter-list {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.chapter-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.chapter-item:last-child {
+    border-bottom: none;
+}
+
+.chapter-item:hover {
+    background: var(--bg-card);
+}
+
+.chapter-number {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-card);
+    border-radius: 50%;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.chapter-name {
+    flex: 1;
+    font-size: 0.875rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.transport-buttons {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.transport-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 50%;
+    transition: background-color 0.2s, transform 0.1s;
+}
+
+.transport-btn:hover {
+    background: var(--bg-card);
+}
+
+.transport-btn:active {
+    transform: scale(0.95);
+}
+
+.chapter-skip-btn {
+    color: var(--primary);
+}
+
+.chapter-skip-btn:hover {
+    background: rgba(var(--primary-rgb), 0.1);
+}
+
+.play-btn, .pause-btn {
+    width: 64px;
+    height: 64px;
+    background: var(--primary);
+    color: white;
+}
+
+.play-btn:hover, .pause-btn:hover {
+    background: var(--primary-dark);
+}
+
+.transport-secondary {
+    display: flex;
+    justify-content: center;
+}
+
+.transport-btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.transport-btn-secondary:hover {
+    background: var(--bg-card);
+    color: var(--text);
+}
+
+.volume-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    padding: 0 1rem;
+}
+
+.volume-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 4px;
+    transition: color 0.2s;
+}
+
+.volume-btn:hover {
+    color: var(--text);
+}
+
+.volume-slider {
+    flex: 1;
+    max-width: 150px;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bg-card);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.volume-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.volume-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    border: none;
+}
+
+.volume-value {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    min-width: 35px;
+    text-align: right;
+}
+</style>
+{{end}}

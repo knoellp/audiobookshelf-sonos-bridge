@@ -1,0 +1,356 @@
+{{define "title"}}Player{{end}}
+
+{{define "content"}}
+<div class="player-page">
+    <a href="/libraries/{{.LibraryID}}/items" class="back-link">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+        Back to Library
+    </a>
+
+    <div class="player-container" id="player-container" data-item-id="{{.Item.ID}}">
+        {{if .Item}}
+        <div class="player-cover">
+            {{if .Item.Media.CoverPath}}
+            <img src="/cover/{{.Item.ID}}" alt="Cover">
+            {{else}}
+            <div class="no-cover">
+                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                </svg>
+            </div>
+            {{end}}
+        </div>
+
+        <div class="player-info">
+            <h1 class="player-title">{{.Item.Media.Metadata.Title}}</h1>
+            {{if .Item.Media.Metadata.Authors}}
+            <p class="player-author">{{range $i, $a := .Item.Media.Metadata.Authors}}{{if $i}}, {{end}}{{$a.Name}}{{end}}</p>
+            {{end}}
+            {{if .Item.Media.Metadata.Series}}
+            <p class="player-series">
+                {{range $i, $s := .Item.Media.Metadata.Series}}{{if $i}}, {{end}}{{$s.Name}}{{if $s.Sequence}} #{{$s.Sequence}}{{end}}{{end}}
+            </p>
+            {{end}}
+        </div>
+
+        {{template "transport" .}}
+        {{end}}
+    </div>
+</div>
+
+<script>
+// Poll for status updates
+let statusInterval;
+
+function startStatusPolling() {
+    statusInterval = setInterval(updateStatus, 1000);
+}
+
+function stopStatusPolling() {
+    if (statusInterval) {
+        clearInterval(statusInterval);
+    }
+}
+
+async function updateStatus() {
+    try {
+        const response = await fetch('/status');
+        const data = await response.json();
+
+        // Update playback active state and item ID
+        playbackActive = data.active;
+        playbackItemId = data.item_id || null;
+
+        // Get current page's item ID
+        const container = document.getElementById('player-container');
+        const currentItemId = container ? container.dataset.itemId : null;
+
+        // Get play/pause buttons
+        const playBtn = document.getElementById('play-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+
+        // Only update UI if playback is for THIS item
+        if (data.active && data.item_id === currentItemId) {
+            document.getElementById('position').textContent = data.position_str || formatSeconds(data.position_sec);
+            document.getElementById('duration').textContent = data.duration_str || formatSeconds(data.duration_sec);
+
+            // Update progress slider (uses the new updateProgressUI function)
+            if (typeof updateProgressUI === 'function') {
+                updateProgressUI(data.position_sec, data.duration_sec);
+            }
+
+            // Update play/pause button based on actual playing state
+            if (data.is_playing) {
+                playBtn.style.display = 'none';
+                pauseBtn.style.display = 'inline-flex';
+            } else {
+                playBtn.style.display = 'inline-flex';
+                pauseBtn.style.display = 'none';
+            }
+
+            // Update volume controls
+            if (typeof updateVolumeUI === 'function') {
+                updateVolumeUI(data.volume, data.muted);
+            }
+
+            // Update current chapter display
+            if (typeof updateCurrentChapterDisplay === 'function') {
+                updateCurrentChapterDisplay(data.position_sec);
+            }
+        } else {
+            // No active playback for this item - show play button
+            if (playBtn && pauseBtn) {
+                playBtn.style.display = 'inline-flex';
+                pauseBtn.style.display = 'none';
+            }
+        }
+    } catch (err) {
+        console.error('Failed to get status:', err);
+    }
+}
+
+function formatSeconds(sec) {
+    const hours = Math.floor(sec / 3600);
+    const minutes = Math.floor((sec % 3600) / 60);
+    const seconds = sec % 60;
+
+    if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+// Transport control functions
+async function transportAction(action, data = {}) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(data)) {
+        params.append(key, value);
+    }
+
+    try {
+        const response = await fetch('/transport/' + action, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params.toString()
+        });
+
+        if (response.ok) {
+            updateStatus();
+            return true;
+        } else {
+            const errorText = await response.text();
+            console.error('Transport action failed:', action, response.status, errorText);
+            // Show user-friendly error messages
+            if (action === 'resume') {
+                if (response.status === 404) {
+                    alert('Fehler: Gerät nicht gefunden oder keine aktive Wiedergabe. Bitte starte die Wiedergabe neu.');
+                } else {
+                    alert('Fehler beim Fortsetzen der Wiedergabe: ' + errorText);
+                }
+            } else if (action === 'stop') {
+                alert('Fehler beim Stoppen: ' + errorText);
+            } else {
+                alert('Aktion fehlgeschlagen: ' + errorText);
+            }
+            return false;
+        }
+    } catch (err) {
+        console.error('Transport action failed:', err);
+        alert('Netzwerkfehler: ' + err.message);
+        return false;
+    }
+}
+
+// Track if playback is active and for which item
+let playbackActive = false;
+let playbackItemId = null;
+
+function pause() {
+    transportAction('pause');
+}
+
+async function resume() {
+    const container = document.getElementById('player-container');
+    const currentItemId = container.dataset.itemId;
+
+    // Check if playback is for a DIFFERENT item - if so, start fresh
+    if (!playbackActive || playbackItemId !== currentItemId) {
+        // No active playback OR playback is for a different item - start with /play
+        await startPlayback();
+    } else {
+        // Playback is paused for THIS item - resume it (send current sonos_uuid for player switching)
+        const sonosBtn = document.getElementById('sonos-picker-toggle');
+        let sonosUuid = sonosBtn ? sonosBtn.dataset.sonosUuid : null;
+        if (!sonosUuid) {
+            sonosUuid = localStorage.getItem('selectedSonosUUID');
+        }
+        transportAction('resume', { sonos_uuid: sonosUuid || '' });
+    }
+}
+
+async function startPlayback() {
+    const container = document.getElementById('player-container');
+    const itemId = container.dataset.itemId;
+
+    // Get selected Sonos device UUID from the header button or localStorage
+    const sonosBtn = document.getElementById('sonos-picker-toggle');
+    let sonosUuid = sonosBtn ? sonosBtn.dataset.sonosUuid : null;
+    if (!sonosUuid) {
+        sonosUuid = localStorage.getItem('selectedSonosUUID');
+    }
+
+    if (!sonosUuid) {
+        alert('Bitte wähle zuerst einen Sonos-Lautsprecher aus.');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('item_id', itemId);
+    formData.append('sonos_uuid', sonosUuid);
+
+    try {
+        const response = await fetch('/play', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (response.ok) {
+            playbackActive = true;
+            updateStatus();
+        } else {
+            const text = await response.text();
+            console.error('Play failed:', text);
+            alert('Wiedergabe fehlgeschlagen: ' + text);
+        }
+    } catch (err) {
+        console.error('Play failed:', err);
+        alert('Wiedergabe fehlgeschlagen');
+    }
+}
+
+function skip(seconds) {
+    transportAction('seek', { offset: seconds });
+}
+
+function seek(position) {
+    transportAction('seek', { position: position });
+}
+
+async function stop() {
+    // Send current Sonos UUID to stop on both old and currently selected device
+    const sonosBtn = document.getElementById('sonos-picker-toggle');
+    let sonosUuid = sonosBtn ? sonosBtn.dataset.sonosUuid : null;
+    if (!sonosUuid) {
+        sonosUuid = localStorage.getItem('selectedSonosUUID');
+    }
+    await transportAction('stop', { current_sonos_uuid: sonosUuid || '' });
+    window.location.href = '/library';
+}
+
+// Start polling on page load
+document.addEventListener('DOMContentLoaded', function() {
+    startStatusPolling();
+    updateStatus();
+});
+
+// Stop polling when page is hidden
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+        stopStatusPolling();
+    } else {
+        startStatusPolling();
+        updateStatus();
+    }
+});
+</script>
+
+<style>
+.player-page {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    margin-bottom: 2rem;
+}
+
+.back-link:hover {
+    color: var(--text-color);
+}
+
+.player-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+
+.player-cover {
+    width: 300px;
+    height: 300px;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    margin-bottom: 2rem;
+}
+
+.player-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.player-cover .no-cover {
+    width: 100%;
+    height: 100%;
+    background: var(--surface-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+}
+
+.player-info {
+    margin-bottom: 2rem;
+}
+
+.player-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0 0 0.5rem 0;
+}
+
+.player-author {
+    color: var(--text-muted);
+    margin: 0 0 0.25rem 0;
+}
+
+.player-series {
+    color: var(--primary-color);
+    font-size: 0.875rem;
+    margin: 0;
+}
+
+@media (max-width: 480px) {
+    .player-cover {
+        width: 250px;
+        height: 250px;
+    }
+
+    .player-title {
+        font-size: 1.25rem;
+    }
+}
+</style>
+{{end}}

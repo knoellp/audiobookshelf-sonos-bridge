@@ -1,0 +1,31 @@
+services:
+  bridge:
+    build: .
+    # Host network is required for UPnP/SSDP Sonos discovery
+    network_mode: host
+    environment:
+      # Required
+      - BRIDGE_ABS_URL=${BRIDGE_ABS_URL}
+      - BRIDGE_PUBLIC_URL=${BRIDGE_PUBLIC_URL}
+      - BRIDGE_SESSION_SECRET=${BRIDGE_SESSION_SECRET}
+      # Optional
+      - BRIDGE_PORT=${BRIDGE_PORT:-8080}
+      - BRIDGE_CACHE_DIR=/cache
+      - BRIDGE_CONFIG_DIR=/config
+      - BRIDGE_MEDIA_DIR=/media
+      - BRIDGE_TRANSCODE_WORKERS=${BRIDGE_TRANSCODE_WORKERS:-2}
+      - BRIDGE_STREAM_TOKEN_TTL=${BRIDGE_STREAM_TOKEN_TTL:-24h}
+      - BRIDGE_ALLOWED_NETWORKS=${BRIDGE_ALLOWED_NETWORKS:-}
+      - BRIDGE_LOG_LEVEL=${BRIDGE_LOG_LEVEL:-info}
+      - BRIDGE_ABS_MEDIA_PREFIX=${BRIDGE_ABS_MEDIA_PREFIX:-/audiobooks}
+      - BRIDGE_PATH_MAPPINGS=${BRIDGE_PATH_MAPPINGS:-}
+    volumes:
+      # Read-only access to media files
+      - ${MEDIA_PATH:-./media}:/media:ro
+      # Read-write for transcoded cache
+      - ${CACHE_PATH:-./cache}:/cache:rw
+      # Read-write for config and database
+      - ${CONFIG_PATH:-./config}:/config:rw
+      # Additional media path for Hörspiele
+      - ${HOERSPIELE_PATH:-./hoerspiele}:/hoerspiele:ro
+    restart: unless-stopped
