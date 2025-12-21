@@ -1,0 +1,95 @@
+{{define "sonos-picker"}}
+<div class="sonos-picker" id="sonos-picker">
+    <div class="sonos-picker-header">
+        <h3>Select Sonos Device</h3>
+        <button type="button"
+                class="btn btn-icon"
+                title="Refresh devices"
+                hx-post="/sonos/refresh"
+                hx-target="#sonos-device-list"
+                hx-swap="innerHTML"
+                hx-indicator="#refresh-indicator">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <polyline points="1 20 1 14 7 14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            <span id="refresh-indicator" class="htmx-indicator">...</span>
+        </button>
+    </div>
+
+    <div id="sonos-device-list" class="sonos-device-list"
+         hx-get="/sonos/devices"
+         hx-trigger="load"
+         hx-target="this"
+         hx-swap="innerHTML">
+        <div class="loading">Loading devices...</div>
+    </div>
+</div>
+{{end}}
+
+{{define "sonos-device-list"}}
+{{if .Devices}}
+<div class="device-grid">
+    {{range .Devices}}
+    <button type="button"
+            class="device-card {{if .IsReachable}}reachable{{else}}unreachable{{end}} {{if eq .UUID $.SelectedUUID}}selected{{end}}"
+            data-uuid="{{.UUID}}"
+            data-name="{{.Name}}"
+            data-ip="{{.IPAddress}}"
+            {{if not .IsReachable}}disabled{{end}}
+            onclick="selectSonosDevice('{{.UUID}}', '{{.Name}}')">
+        <div class="device-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
+                <circle cx="12" cy="14" r="4"></circle>
+                <line x1="12" y1="6" x2="12.01" y2="6"></line>
+            </svg>
+        </div>
+        <div class="device-info">
+            <span class="device-name">{{.Name}}</span>
+            <span class="device-model">{{.Model}}</span>
+            {{if not .IsReachable}}
+            <span class="device-status">Offline</span>
+            {{end}}
+        </div>
+    </button>
+    {{end}}
+</div>
+{{else}}
+<div class="empty-state">
+    <p>No Sonos devices found.</p>
+    <p class="hint">Make sure your Sonos devices are powered on and connected to the same network.</p>
+</div>
+{{end}}
+
+<script>
+function selectSonosDevice(uuid, name) {
+    // Store selection
+    localStorage.setItem('selectedSonosUUID', uuid);
+    localStorage.setItem('selectedSonosName', name);
+
+    // Update UI
+    document.querySelectorAll('.device-card').forEach(card => {
+        card.classList.remove('selected');
+    });
+    event.currentTarget.classList.add('selected');
+
+    // Dispatch event for other components
+    document.dispatchEvent(new CustomEvent('sonosDeviceSelected', {
+        detail: { uuid, name }
+    }));
+}
+
+// Restore selection on load
+document.addEventListener('DOMContentLoaded', function() {
+    const savedUUID = localStorage.getItem('selectedSonosUUID');
+    if (savedUUID) {
+        const card = document.querySelector(`.device-card[data-uuid="${savedUUID}"]`);
+        if (card) {
+            card.classList.add('selected');
+        }
+    }
+});
+</script>
+{{end}}

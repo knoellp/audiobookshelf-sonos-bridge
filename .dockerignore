@@ -1,0 +1,49 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+*.test
+
+# Documentation (not needed in container)
+docs/
+*.md
+!web/**/*.md
+
+# Development files
+.env
+.env.local
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+*.tmp
+
+# Cache directories (will be mounted as volumes)
+cache/
+config/
+media/
+
+# Specify tooling
+.specify/
+.claude/
+
+# Downloaded packages (used during build only)
+google-chrome-stable_current_amd64.deb
