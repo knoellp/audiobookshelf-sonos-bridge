@@ -1,0 +1,84 @@
+{{define "content"}}
+<div class="items-container">
+    <div class="items-header">
+        <div class="breadcrumb">
+            <a href="/libraries">Libraries</a>
+            <span class="separator">/</span>
+            <span>{{.LibraryName}}</span>
+        </div>
+        <h1>{{.LibraryName}}</h1>
+    </div>
+
+    <!-- Search and filters -->
+    <div class="items-toolbar">
+        <div class="search-box">
+            <input type="search"
+                   name="q"
+                   placeholder="Search audiobooks..."
+                   value="{{.Query}}"
+                   hx-get="/libraries/{{.LibraryID}}/items"
+                   hx-trigger="input changed delay:300ms, keyup[key=='Enter']"
+                   hx-target="#items-grid"
+                   hx-include="[name='sort']"
+                   hx-push-url="true">
+        </div>
+
+        <div class="sort-controls">
+            <select name="sort"
+                    hx-get="/libraries/{{.LibraryID}}/items"
+                    hx-trigger="change"
+                    hx-target="#items-grid"
+                    hx-include="[name='q']"
+                    hx-push-url="true">
+                <option value="title" {{if eq .Sort "title"}}selected{{end}}>Title A-Z</option>
+                <option value="recent" {{if eq .Sort "recent"}}selected{{end}}>Recently Played</option>
+                <option value="added" {{if eq .Sort "added"}}selected{{end}}>Recently Added</option>
+                <option value="author" {{if eq .Sort "author"}}selected{{end}}>Author</option>
+            </select>
+        </div>
+
+        <div class="view-toggle">
+            <button class="btn btn-icon {{if eq .View "grid"}}active{{end}}"
+                    title="Grid view"
+                    hx-get="/libraries/{{.LibraryID}}/items?view=grid"
+                    hx-target="#items-grid"
+                    hx-push-url="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="14" width="7" height="7"></rect>
+                    <rect x="3" y="14" width="7" height="7"></rect>
+                </svg>
+            </button>
+            <button class="btn btn-icon {{if eq .View "list"}}active{{end}}"
+                    title="List view"
+                    hx-get="/libraries/{{.LibraryID}}/items?view=list"
+                    hx-target="#items-grid"
+                    hx-push-url="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Items count -->
+    <div class="items-count">
+        {{if .Query}}
+        <span>{{.Total}} results for "{{.Query}}"</span>
+        {{else}}
+        <span>{{.Total}} audiobooks</span>
+        {{end}}
+    </div>
+
+    <!-- Items grid -->
+    <div id="items-grid">
+        {{template "item-grid" .}}
+    </div>
+</div>
+{{end}}

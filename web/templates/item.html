@@ -1,0 +1,385 @@
+{{define "content"}}
+<div class="item-detail">
+    <div class="item-detail-header">
+        <a href="/libraries/{{.LibraryID}}/items" class="back-link">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+            Back to Library
+        </a>
+    </div>
+
+    <div class="item-detail-content">
+        <div class="item-detail-cover">
+            <img src="/cover/{{.Item.ID}}" alt="{{.Item.Title}}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <div class="item-cover-fallback" style="display:none;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                </svg>
+            </div>
+            {{if .Item.Progress}}
+            <div class="progress-bar detail-progress">
+                <div class="progress-fill" style="width: {{printf "%.0f" (mult .Item.Progress 100)}}%"></div>
+            </div>
+            {{end}}
+        </div>
+
+        <div class="item-detail-info">
+            <h1 class="item-detail-title">{{.Item.Title}}</h1>
+            {{if .Item.Author}}
+            <p class="item-detail-author">by {{.Item.Author}}</p>
+            {{end}}
+
+            <div class="item-detail-meta">
+                <span class="meta-item">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    {{formatDuration .Item.DurationSec}}
+                </span>
+                <span class="meta-item cache-status-meta" id="cache-status-container">
+                    <span id="cache-status-badge"></span>
+                    <span id="cache-status-text">Checking...</span>
+                </span>
+            </div>
+
+            {{if .Item.Description}}
+            <div class="item-detail-description">
+                <p>{{.Item.Description}}</p>
+            </div>
+            {{end}}
+
+            <div class="item-detail-actions">
+                <button type="button" class="btn btn-primary btn-play" id="play-btn" onclick="playItem()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    <span id="play-btn-text">Play</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay" class="loading-overlay" style="display: none;">
+    <div class="loading-content">
+        <div class="loading-spinner"></div>
+        <p id="loading-message">Preparing audiobook...</p>
+    </div>
+</div>
+
+<script>
+const itemId = '{{.Item.ID}}';
+let cacheStatus = 'unknown';
+
+// Check cache status on load
+async function checkCacheStatus() {
+    try {
+        const response = await fetch('/cache/status/' + itemId);
+        const html = await response.text();
+
+        const container = document.getElementById('cache-status-container');
+        const badge = document.getElementById('cache-status-badge');
+        const text = document.getElementById('cache-status-text');
+
+        if (html.includes('cached')) {
+            cacheStatus = 'ready';
+            badge.className = 'status-dot status-cached';
+            text.textContent = 'Ready to play';
+        } else if (html.includes('in_progress')) {
+            cacheStatus = 'in_progress';
+            badge.className = 'status-dot status-progress';
+            text.textContent = 'Transcoding...';
+            // Poll again in 3 seconds
+            setTimeout(checkCacheStatus, 3000);
+        } else {
+            cacheStatus = 'pending';
+            badge.className = 'status-dot status-pending';
+            text.textContent = 'Not cached (will transcode on play)';
+        }
+    } catch (err) {
+        console.error('Failed to check cache status:', err);
+    }
+}
+
+function playItem() {
+    const sonosUUID = localStorage.getItem('selectedSonosUUID');
+
+    if (!sonosUUID) {
+        alert('Please select a Sonos device first');
+        document.getElementById('sonos-picker-toggle')?.click();
+        return;
+    }
+
+    const btn = document.getElementById('play-btn');
+    const btnText = document.getElementById('play-btn-text');
+    const overlay = document.getElementById('loading-overlay');
+    const loadingMessage = document.getElementById('loading-message');
+
+    // Show loading state
+    btn.disabled = true;
+    btnText.textContent = 'Starting...';
+
+    // Show overlay if transcoding is needed
+    if (cacheStatus !== 'ready') {
+        overlay.style.display = 'flex';
+        loadingMessage.textContent = 'Transcoding audiobook... This may take a moment.';
+    } else {
+        overlay.style.display = 'flex';
+        loadingMessage.textContent = 'Starting playback...';
+    }
+
+    const formData = new FormData();
+    formData.append('item_id', itemId);
+    formData.append('sonos_uuid', sonosUUID);
+
+    fetch('/play', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (response.ok) {
+            return response.json();
+        } else {
+            throw new Error('Failed to start playback');
+        }
+    })
+    .then(data => {
+        if (data && data.redirect) {
+            window.location.href = data.redirect;
+        }
+    })
+    .catch(err => {
+        console.error('Play failed:', err);
+        alert('Failed to start playback. Please try again.');
+        overlay.style.display = 'none';
+        btn.disabled = false;
+        btnText.textContent = 'Play';
+    });
+}
+
+// Check cache status on page load
+document.addEventListener('DOMContentLoaded', checkCacheStatus);
+</script>
+
+<style>
+.item-detail {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+.item-detail-header {
+    margin-bottom: 1.5rem;
+}
+
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.2s;
+}
+
+.back-link:hover {
+    color: var(--text-primary);
+}
+
+.item-detail-content {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+}
+
+.item-detail-cover {
+    flex: 0 0 auto;
+    width: 280px;
+    position: relative;
+}
+
+.item-detail-cover img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.item-detail-cover .item-cover-fallback {
+    width: 100%;
+    aspect-ratio: 1;
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+}
+
+.detail-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    border-radius: 0 0 12px 12px;
+    overflow: hidden;
+}
+
+.item-detail-info {
+    flex: 1;
+    min-width: 280px;
+}
+
+.item-detail-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    margin: 0 0 0.5rem;
+    color: var(--text-primary);
+}
+
+.item-detail-author {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    margin: 0 0 1.5rem;
+}
+
+.item-detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.meta-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.cache-status-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-cached {
+    background: #22c55e;
+}
+
+.status-progress {
+    background: #3b82f6;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.status-pending {
+    background: #eab308;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.item-detail-description {
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 2rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.item-detail-actions {
+    display: flex;
+    gap: 1rem;
+}
+
+.btn-play {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+    border-radius: 50px;
+}
+
+.btn-play svg {
+    flex-shrink: 0;
+}
+
+/* Loading Overlay */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.loading-content {
+    text-align: center;
+    color: white;
+}
+
+.loading-spinner {
+    width: 60px;
+    height: 60px;
+    border: 4px solid rgba(255, 255, 255, 0.2);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 1.5rem;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.loading-content p {
+    font-size: 1.1rem;
+    margin: 0;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    .item-detail-content {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .item-detail-cover {
+        width: 200px;
+    }
+
+    .item-detail-info {
+        text-align: center;
+    }
+
+    .item-detail-meta {
+        justify-content: center;
+    }
+
+    .item-detail-actions {
+        justify-content: center;
+    }
+}
+</style>
+{{end}}

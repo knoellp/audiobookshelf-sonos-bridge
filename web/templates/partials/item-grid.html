@@ -1,0 +1,226 @@
+{{define "item-grid"}}
+<div class="items-grid {{if eq .View "list"}}list-view{{end}}">
+    {{range .Items}}
+    <a href="/item/{{.ID}}" class="item-card" data-item-id="{{.ID}}">
+        <div class="item-cover-container">
+            <div class="item-cover">
+                {{if .CoverURL}}
+                <img src="/cover/{{.ID}}"
+                     alt="{{.Title}}"
+                     loading="lazy"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div class="item-cover-fallback" style="display:none;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                    </svg>
+                </div>
+                {{else}}
+                <div class="item-cover-fallback">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                    </svg>
+                </div>
+                {{end}}
+                {{if .Progress}}
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: {{printf "%.0f" (mult .Progress 100)}}%"></div>
+                </div>
+                {{end}}
+            </div>
+            <div class="item-overlay">
+                <div class="view-indicator">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </div>
+                <div class="cache-status" id="cache-status-{{.ID}}"
+                     hx-get="/cache/status/{{.ID}}"
+                     hx-trigger="load"
+                     hx-swap="innerHTML">
+                </div>
+            </div>
+        </div>
+        <div class="item-info">
+            <h3 class="item-title" title="{{.Title}}">{{.Title}}</h3>
+            <p class="item-author" title="{{.Author}}">{{.Author}}</p>
+            <span class="item-duration">{{formatDuration .DurationSec}}</span>
+        </div>
+    </a>
+    {{else}}
+    <div class="empty-state">
+        {{if $.Query}}
+        <p>No audiobooks found matching "{{$.Query}}"</p>
+        {{else}}
+        <p>No audiobooks in this library</p>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+
+{{if .HasMore}}
+<div class="load-more" id="load-more-container">
+    <button class="btn btn-secondary"
+            hx-get="/libraries/{{.LibraryID}}/items?offset={{.NextOffset}}&limit={{.Limit}}&append=1"
+            hx-target=".items-grid"
+            hx-swap="beforeend"
+            hx-include="[name='q'], [name='sort']">
+        Load More
+    </button>
+</div>
+{{end}}
+
+
+<style>
+.item-cover-container {
+    position: relative;
+}
+
+a.item-card {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+
+a.item-card:hover {
+    transform: translateY(-4px);
+}
+
+.item-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    transition: opacity 0.2s;
+    border-radius: 8px;
+}
+
+.item-card:hover .item-overlay {
+    opacity: 1;
+}
+
+.view-indicator {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    transition: transform 0.2s;
+}
+
+.item-card:hover .view-indicator {
+    transform: scale(1.1);
+}
+
+.cache-status {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+}
+
+.cache-status.cached {
+    background: rgba(34, 197, 94, 0.8);
+}
+
+.cache-status.pending {
+    background: rgba(234, 179, 8, 0.8);
+}
+
+.cache-status.in_progress {
+    background: rgba(59, 130, 246, 0.8);
+}
+</style>
+{{end}}
+
+{{define "item-cards-append"}}
+{{range .Items}}
+<a href="/item/{{.ID}}" class="item-card" data-item-id="{{.ID}}">
+    <div class="item-cover-container">
+        <div class="item-cover">
+            {{if .CoverURL}}
+            <img src="/cover/{{.ID}}"
+                 alt="{{.Title}}"
+                 loading="lazy"
+                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <div class="item-cover-fallback" style="display:none;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                </svg>
+            </div>
+            {{else}}
+            <div class="item-cover-fallback">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                </svg>
+            </div>
+            {{end}}
+            {{if .Progress}}
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: {{printf "%.0f" (mult .Progress 100)}}%"></div>
+            </div>
+            {{end}}
+        </div>
+        <div class="item-overlay">
+            <div class="view-indicator">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+            </div>
+            <div class="cache-status" id="cache-status-{{.ID}}"
+                 hx-get="/cache/status/{{.ID}}"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">
+            </div>
+        </div>
+    </div>
+    <div class="item-info">
+        <h3 class="item-title" title="{{.Title}}">{{.Title}}</h3>
+        <p class="item-author" title="{{.Author}}">{{.Author}}</p>
+        <span class="item-duration">{{formatDuration .DurationSec}}</span>
+    </div>
+</a>
+{{end}}
+{{if .HasMore}}
+<div class="load-more" id="load-more-container" hx-swap-oob="outerHTML:#load-more-container">
+    <button class="btn btn-secondary"
+            hx-get="/libraries/{{.LibraryID}}/items?offset={{.NextOffset}}&limit={{.Limit}}&append=1"
+            hx-target=".items-grid"
+            hx-swap="beforeend"
+            hx-include="[name='q'], [name='sort']">
+        Load More
+    </button>
+</div>
+{{else}}
+<div id="load-more-container" hx-swap-oob="outerHTML:#load-more-container"></div>
+{{end}}
+{{end}}
+
+{{define "cache-status-badge"}}
+{{if eq .Status "ready"}}
+<span class="cache-badge cached" title="Cached"></span>
+{{else if eq .Status "in_progress"}}
+<span class="cache-badge in_progress" title="Transcoding"></span>
+{{else if eq .Status "pending"}}
+<span class="cache-badge pending" title="Not cached"></span>
+{{else}}
+{{/* Empty status - show nothing */}}
+{{end}}
+{{end}}
