@@ -1,485 +1,5 @@
 # Geplante Features
 
-## Sonos-Gruppierung
-
-**Status:** Geplant
-**Priorität:** Hoch (wichtig für finale App-Funktion)
-
-### Beschreibung
-
-Ermöglicht das Bilden und Auflösen von Sonos-Gruppen direkt aus der App heraus. Gruppierte Player spielen synchron dasselbe Audio ab.
-
-### UI-Konzept
-
-1. **Player-Auswahl im Sonos-Picker:**
-   - User wählt einen Player aus der Liste
-   - Wenn der Player eine Gruppe anführt (Coordinator mit GroupSize > 1), erscheint rechts neben dem Player-Namen ein **"Gruppe"**-Button
-
-2. **Gruppen-Editor (Modal oder Slide-In):**
-   - Zeigt alle verfügbaren Player als Checkbox-Liste
-   - Aktuell gruppierte Player sind vorausgewählt
-   - User kann Player an- und abwählen
-   - Der aktuelle Coordinator ist markiert (z.B. Krone-Icon)
-
-3. **Coordinator-Wechsel:**
-   - Wenn der aktuelle Coordinator abgewählt wird:
-     - Der oberste verbleibende Player wird automatisch zum neuen Coordinator
-     - Bestätigungsdialog vor Ausführung: "Kamin wird die Gruppe verlassen. Küche wird neuer Gruppenführer."
-
-4. **Bestätigung:**
-   - Änderungen werden erst nach Klick auf "Übernehmen" ausgeführt
-   - "Abbrechen" verwirft alle Änderungen
-
-### UI-Mockup (ASCII)
-
-```
-┌─────────────────────────────────────┐
-│  Select Sonos Device            ↻   │
-├─────────────────────────────────────┤
-│  ○ Annas Zimmer                     │
-│  ○ Bad                              │
-│  ● Kamin [+1]  [Gruppe]  ←── Button │
-│  ○ Schlafzimmer                     │
-│  ○ Büro                             │
-└─────────────────────────────────────┘
-
-         ↓ Klick auf [Gruppe]
-
-┌─────────────────────────────────────┐
-│  Gruppe bearbeiten              ✕   │
-├─────────────────────────────────────┤
-│  Wähle Player für diese Gruppe:     │
-│                                     │
-│  ☑ Kamin 👑 (Gruppenführer)         │
-│  ☑ Küche                            │
-│  ☐ Annas Zimmer                     │
-│  ☐ Bad                              │
-│  ☐ Schlafzimmer                     │
-│  ☐ Büro                             │
-│                                     │
-│  [Abbrechen]         [Übernehmen]   │
-└─────────────────────────────────────┘
-```
-
-### Technische Umsetzung
-
-#### SOAP-Actions (UPnP AVTransport)
-
-**1. Player zu Gruppe hinzufügen:**
-```xml
-<!-- SetAVTransportURI auf dem Player, der hinzugefügt werden soll -->
-<u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
-  <InstanceID>0</InstanceID>
-  <CurrentURI>x-rincon:RINCON_COORDINATOR_UUID</CurrentURI>
-  <CurrentURIMetaData></CurrentURIMetaData>
-</u:SetAVTransportURI>
-```
-
-**2. Player aus Gruppe entfernen (standalone machen):**
-```xml
-<!-- BecomeCoordinatorOfStandaloneGroup auf dem Player -->
-<u:BecomeCoordinatorOfStandaloneGroup xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
-  <InstanceID>0</InstanceID>
-</u:BecomeCoordinatorOfStandaloneGroup>
-```
-
-**3. Coordinator wechseln:**
-- Neuen Coordinator aus der Gruppe entfernen (BecomeCoordinatorOfStandaloneGroup)
-- Alte Gruppe-Mitglieder zum neuen Coordinator hinzufügen (SetAVTransportURI)
-- Alten Coordinator zum neuen hinzufügen (falls er in der Gruppe bleiben soll)
-
-#### Backend-Änderungen
-
-1. **`internal/sonos/avtransport.go`** - Neue Methoden:
-   ```go
-   func (c *AVTransportClient) JoinGroup(ctx context.Context, coordinatorUUID string) error
-   func (c *AVTransportClient) LeaveGroup(ctx context.Context) error
-   ```
-
-2. **`internal/web/sonos.go`** - Neue Endpoints:
-   ```
-   POST /sonos/group/join    - Player zu Gruppe hinzufügen
-   POST /sonos/group/leave   - Player aus Gruppe entfernen
-   POST /sonos/group/update  - Komplette Gruppe aktualisieren (Batch)
-   ```
-
-3. **Gruppenlogik:**
-   - Bei Coordinator-Wechsel: Reihenfolge der SOAP-Calls ist wichtig
-   - Erst neuen Coordinator erstellen, dann Mitglieder umziehen
-
-#### Frontend-Änderungen
-
-1. **`web/templates/partials/sonos-picker.html`:**
-   - "Gruppe"-Button bei Coordinators mit GroupSize > 1
-   - Auch bei Standalone-Playern optional (um neue Gruppe zu starten)
-
-2. **Neues Template `sonos-group-editor.html`:**
-   - Checkbox-Liste aller Player
-   - Coordinator-Markierung
-   - Übernehmen/Abbrechen Buttons
-
-3. **JavaScript:**
-   - Gruppen-Editor öffnen/schließen
-   - Änderungen sammeln und als Batch senden
-   - Optimistic UI vs. Warten auf Bestätigung
-
-### Offene Fragen
-
-1. **Neue Gruppe starten:** Soll man auch bei Standalone-Playern eine Gruppe starten können? (Vermutlich ja)
-
-2. **Leere Gruppe:** Was passiert wenn alle Player abgewählt werden? → Alle werden standalone
-
-3. **Playback bei Gruppierung:** Soll das aktuelle Playback beim Gruppieren weiterlaufen? Sonos macht das automatisch - der neue Player übernimmt den Stream des Coordinators.
-
-4. **Fehlerbehandlung:** Was wenn ein Player nicht erreichbar ist während der Gruppierung?
-
-5. **Live-Updates:** Soll die Gruppen-Ansicht live aktualisiert werden (WebSocket/Polling) oder nur bei manuellem Refresh?
-
-### Abhängigkeiten
-
-- Bestehende ZoneGroupTopology-Implementierung (vorhanden)
-- AVTransport Client (vorhanden, muss erweitert werden)
-- Device Discovery (vorhanden)
-
-### Geschätzter Aufwand
-
-| Komponente | Aufwand |
-|------------|---------|
-| Backend SOAP-Actions | 1-2h |
-| Backend Endpoints | 1-2h |
-| Gruppenlogik (Coordinator-Wechsel) | 2-3h |
-| Frontend UI | 4-6h |
-| Testing & Edge Cases | 2-3h |
-| **Gesamt** | **10-16h** |
-
----
-
-## Sonos-Gruppen-Wiedergabe & Lautstärkeregelung
-
-**Status:** Geplant
-**Priorität:** Hoch (kritisch für Gruppen-Nutzung)
-
-### Problem 1: Wiedergabe nur auf Gruppenführer
-
-**Symptom:** Wenn ein gruppierter Lautsprecher als Ziel ausgewählt wird, spielt das Audio nur auf dem Gruppenführer (Coordinator), nicht auf allen Gruppenmitgliedern.
-
-**Ursache:** Die aktuelle Implementierung sendet AVTransport-Befehle (SetAVTransportURI, Play, Pause, etc.) direkt an die IP-Adresse des vom Benutzer ausgewählten Geräts. Bei Sonos-Gruppen müssen **alle Befehle an den Coordinator** gesendet werden - nur dieser kann die gesamte Gruppe steuern.
-
-**Beispiel des Problems:**
-```
-Gruppe: Kamin (Coordinator) + Küche (Member)
-Benutzer wählt: Küche
-Aktuell: SetAVTransportURI → 192.168.1.50 (Küche) → Nur Küche spielt
-Korrekt: SetAVTransportURI → 192.168.1.40 (Kamin) → Ganze Gruppe spielt
-```
-
-### Problem 2: Gruppen-Lautstärkeregelung
-
-**Symptom:** Die aktuelle Lautstärkeregelung kann nur einzelne Lautsprecher steuern. Bei Gruppen fehlen:
-1. **Relative Gruppen-Lautstärke:** Alle Lautsprecher proportional lauter/leiser
-2. **Individuelle Lautstärke:** Einzelne Lautsprecher in der Gruppe anpassen
-
-### Lösung: Coordinator-Routing
-
-#### Schritt 1: Coordinator ermitteln
-
-Die bestehende `GetGroupInfo()` Funktion in `internal/sonos/zonegroupstate.go` liefert bereits:
-```go
-type GroupInfo struct {
-    CoordinatorUUID string   // UUID des Gruppenführers
-    CoordinatorIP   string   // IP-Adresse des Gruppenführers
-    Members         []Member // Alle Gruppenmitglieder
-    GroupSize       int      // Anzahl der Mitglieder
-}
-```
-
-#### Schritt 2: AVTransport-Befehle an Coordinator routen
-
-**Vor dem Senden von AVTransport-Befehlen:**
-1. ZoneGroupTopology des ausgewählten Geräts abfragen
-2. Coordinator-IP aus GroupInfo extrahieren
-3. Alle AVTransport-Befehle an Coordinator-IP senden
-
-**Betroffene Stellen in `internal/web/player.go`:**
-
-| Handler | Aktuelle Logik | Neue Logik |
-|---------|---------------|------------|
-| `HandlePlay` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
-| `HandleResume` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
-| `HandlePause` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
-| `HandleStop` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
-| `HandleSeek` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
-
-**Implementierungsvorschlag:**
-
-```go
-// Neue Hilfsfunktion in player.go oder sonos package
-func (h *PlayerHandler) getCoordinatorIP(ctx context.Context, deviceIP string) (string, error) {
-    zgClient := sonos.NewZoneGroupClient(deviceIP)
-    groupInfo, err := zgClient.GetGroupInfo(ctx)
-    if err != nil {
-        // Fallback: Gerät ist standalone, eigene IP verwenden
-        return deviceIP, nil
-    }
-    if groupInfo.CoordinatorIP != "" {
-        return groupInfo.CoordinatorIP, nil
-    }
-    return deviceIP, nil
-}
-
-// Verwendung in HandlePlay:
-func (h *PlayerHandler) HandlePlay(...) {
-    // ... bestehender Code ...
-
-    // NEU: Coordinator-IP ermitteln
-    targetIP, err := h.getCoordinatorIP(ctx, selectedDeviceIP)
-    if err != nil {
-        slog.Warn("could not get coordinator, using selected device", "error", err)
-        targetIP = selectedDeviceIP
-    }
-
-    // AVTransport-Client mit Coordinator-IP erstellen
-    avt := sonos.NewAVTransportClient(targetIP)
-    avt.SetAVTransportURI(ctx, streamURL, metadata)
-    avt.Play(ctx)
-
-    // Playback-Session speichert weiterhin die UUID des AUSGEWÄHLTEN Geräts
-    // (für UI-Anzeige), aber Befehle gehen an Coordinator
-}
-```
-
-**Wichtig:** Die `PlaybackSession` speichert weiterhin die UUID/IP des vom Benutzer ausgewählten Geräts (für UI-Konsistenz). Die Coordinator-Ermittlung erfolgt dynamisch bei jedem Befehl.
-
-### Lösung: Gruppen-Lautstärkeregelung
-
-#### Sonos-Services für Lautstärke
-
-| Service | Port | Zweck |
-|---------|------|-------|
-| RenderingControl | 1400 | Einzelgerät: Lautstärke, Bass, Treble |
-| GroupRenderingControl | 1400 | Gruppe: Relative Lautstärke aller Mitglieder |
-
-#### GroupRenderingControl SOAP-Actions
-
-**1. Gruppen-Lautstärke setzen (relativ):**
-```xml
-<u:SetGroupVolume xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1">
-  <InstanceID>0</InstanceID>
-  <DesiredVolume>50</DesiredVolume>
-</u:SetGroupVolume>
-```
-
-**2. Gruppen-Lautstärke abfragen:**
-```xml
-<u:GetGroupVolume xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1">
-  <InstanceID>0</InstanceID>
-</u:GetGroupVolume>
-```
-
-**3. Relative Lautstärke einzelner Mitglieder:**
-```xml
-<u:SetRelativeGroupVolume xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1">
-  <InstanceID>0</InstanceID>
-  <Adjustment>-10</Adjustment>  <!-- Relativ: -100 bis +100 -->
-</u:SetRelativeGroupVolume>
-```
-
-#### UI-Konzept für Gruppen-Lautstärke
-
-**Aktuelle UI (Einzelgerät):**
-```
-┌─────────────────────────────────────┐
-│  🔊 ━━━━━━━━━━━━━━━━━━━━━━━ 65%    │
-└─────────────────────────────────────┘
-```
-
-**Neue UI (Gruppe):**
-```
-┌─────────────────────────────────────┐
-│  Gruppen-Lautstärke                 │
-│  🔊 ━━━━━━━━━━━━━━━━━━━━━━━ 65%    │  ← Steuert alle proportional
-│                                     │
-│  ▼ Einzelne Lautsprecher            │  ← Aufklappbar
-│  ├─ Kamin 👑        🔊━━━━━ 70%    │
-│  └─ Küche           🔊━━━━━ 60%    │
-└─────────────────────────────────────┘
-```
-
-**Verhalten:**
-1. **Gruppen-Slider:** Ändert alle Mitglieder proportional (über GroupRenderingControl)
-2. **Einzel-Slider:** Ändert nur dieses Gerät (über RenderingControl an jeweilige IP)
-3. **Aufklappbar:** Einzelne Lautsprecher nur bei Bedarf sichtbar
-
-### Technische Umsetzung
-
-#### Backend-Änderungen
-
-**1. Neuer Client: `internal/sonos/grouprendering.go`**
-```go
-type GroupRenderingClient struct {
-    ip string
-}
-
-func NewGroupRenderingClient(ip string) *GroupRenderingClient
-
-func (c *GroupRenderingClient) GetGroupVolume(ctx context.Context) (int, error)
-func (c *GroupRenderingClient) SetGroupVolume(ctx context.Context, volume int) error
-func (c *GroupRenderingClient) GetGroupMute(ctx context.Context) (bool, error)
-func (c *GroupRenderingClient) SetGroupMute(ctx context.Context, mute bool) error
-```
-
-**2. Erweiterung `internal/sonos/rendering.go`:**
-```go
-// Bestehend - Einzelgerät:
-func (c *RenderingClient) GetVolume(ctx context.Context) (int, error)
-func (c *RenderingClient) SetVolume(ctx context.Context, volume int) error
-
-// Neu - Für einzelne Gruppenmitglieder:
-// (bereits vorhanden, wird an jeweilige Geräte-IP aufgerufen)
-```
-
-**3. Neue API-Endpoints in `internal/web/player.go`:**
-```
-GET  /volume/group         → Gruppen-Lautstärke abfragen
-POST /volume/group         → Gruppen-Lautstärke setzen
-GET  /volume/members       → Lautstärke aller Mitglieder
-POST /volume/member/{uuid} → Einzelgerät-Lautstärke setzen
-```
-
-**4. Coordinator-Routing für alle AVTransport-Befehle:**
-
-In jedem Handler vor AVTransport-Aufrufen:
-```go
-coordinatorIP, _ := h.getCoordinatorIP(ctx, playback.SonosIP)
-avt := sonos.NewAVTransportClient(coordinatorIP)
-```
-
-#### Frontend-Änderungen
-
-**1. `web/templates/partials/transport.html`:**
-- Gruppen-Lautstärke-Slider hinzufügen
-- Aufklappbare Einzelgeräte-Liste
-- Unterscheidung: Standalone vs. Gruppe
-
-**2. JavaScript-Erweiterungen:**
-```javascript
-// Prüfen ob Gruppe aktiv
-async function checkGroupStatus() {
-    const response = await fetch('/sonos/group-info/' + currentDeviceUUID);
-    const data = await response.json();
-    if (data.groupSize > 1) {
-        showGroupVolumeControls(data.members);
-    } else {
-        showSingleVolumeControl();
-    }
-}
-
-// Gruppen-Lautstärke ändern
-async function setGroupVolume(volume) {
-    await fetch('/volume/group', {
-        method: 'POST',
-        body: JSON.stringify({ volume: volume })
-    });
-}
-
-// Einzelgerät-Lautstärke ändern
-async function setMemberVolume(uuid, volume) {
-    await fetch('/volume/member/' + uuid, {
-        method: 'POST',
-        body: JSON.stringify({ volume: volume })
-    });
-}
-```
-
-### Datenfluss bei Gruppen-Wiedergabe
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│ 1. Benutzer wählt "Küche" (Mitglied einer Gruppe)              │
-└────────────────────────────────────────────────────────────────┘
-                              ↓
-┌────────────────────────────────────────────────────────────────┐
-│ 2. Backend: getCoordinatorIP("Küche-IP")                       │
-│    → ZoneGroupTopology abfragen                                │
-│    → Coordinator = "Kamin-IP"                                  │
-└────────────────────────────────────────────────────────────────┘
-                              ↓
-┌────────────────────────────────────────────────────────────────┐
-│ 3. AVTransport-Befehle → Kamin-IP (Coordinator)                │
-│    SetAVTransportURI, Play, Pause, Seek, Stop                  │
-└────────────────────────────────────────────────────────────────┘
-                              ↓
-┌────────────────────────────────────────────────────────────────┐
-│ 4. Sonos-Gruppe: Alle Mitglieder spielen synchron              │
-│    Kamin + Küche spielen dasselbe Audio                        │
-└────────────────────────────────────────────────────────────────┘
-```
-
-### Datenfluss bei Gruppen-Lautstärke
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│ Gruppen-Slider bewegen                                         │
-└────────────────────────────────────────────────────────────────┘
-                              ↓
-┌────────────────────────────────────────────────────────────────┐
-│ POST /volume/group { volume: 60 }                              │
-│ → GroupRenderingControl.SetGroupVolume(60) an Coordinator      │
-│ → Alle Mitglieder werden proportional angepasst                │
-└────────────────────────────────────────────────────────────────┘
-
-┌────────────────────────────────────────────────────────────────┐
-│ Einzel-Slider (Küche) bewegen                                  │
-└────────────────────────────────────────────────────────────────┘
-                              ↓
-┌────────────────────────────────────────────────────────────────┐
-│ POST /volume/member/RINCON_KÜCHE { volume: 45 }                │
-│ → RenderingControl.SetVolume(45) an Küche-IP                   │
-│ → Nur Küche wird angepasst                                     │
-└────────────────────────────────────────────────────────────────┘
-```
-
-### Offene Fragen
-
-1. **Coordinator-Wechsel während Wiedergabe:** Was passiert, wenn sich die Gruppe während der Wiedergabe ändert (z.B. Coordinator verlässt Gruppe)?
-   - **Vorschlag:** Bei jedem Befehl Coordinator neu ermitteln (nicht cachen)
-
-2. **Status-Polling bei Gruppen:** Soll der Status vom Coordinator oder vom ausgewählten Gerät gelesen werden?
-   - **Vorschlag:** Vom Coordinator, da dieser den aktuellen Playback-Status hat
-
-3. **UI bei Gruppenwechsel:** Soll die Lautstärke-UI automatisch aktualisiert werden, wenn sich Gruppen ändern?
-   - **Vorschlag:** Bei jedem Status-Poll auch Gruppen-Info prüfen
-
-4. **Latenz bei Coordinator-Ermittlung:** Jede AVTransport-Aktion erfordert einen zusätzlichen HTTP-Request für ZoneGroupTopology
-   - **Vorschlag:** Coordinator-Info kurzzeitig cachen (5-10 Sekunden)
-
-### Abhängigkeiten
-
-- ZoneGroupTopology-Implementierung (vorhanden in `zonegroupstate.go`)
-- RenderingControl-Implementierung (vorhanden in `rendering.go`)
-- AVTransport-Implementierung (vorhanden in `avtransport.go`)
-- GroupRenderingControl (NEU zu implementieren)
-
-### Geschätzter Aufwand
-
-| Komponente | Aufwand |
-|------------|---------|
-| Coordinator-Routing (Backend) | 2-3h |
-| GroupRenderingControl Client | 1-2h |
-| Volume API Endpoints | 1-2h |
-| Frontend: Gruppen-Lautstärke UI | 3-4h |
-| Frontend: Einzelgeräte-Liste | 2-3h |
-| Testing mit echten Gruppen | 2-3h |
-| **Gesamt** | **11-17h** |
-
-### Priorisierung
-
-1. **Phase 1:** Coordinator-Routing (Problem 1 lösen - Wiedergabe funktioniert auf Gruppen)
-2. **Phase 2:** Gruppen-Lautstärke (Haupt-Slider)
-3. **Phase 3:** Einzelgeräte-Lautstärke (Feintuning)
-
----
-
 ## Bibliotheks-Filter und Serien-Darstellung
 
 **Status:** Geplant
@@ -855,11 +375,29 @@ Zusätzlich zur Navigation: Filter-Chips in der normalen Bücher-Ansicht:
 ## Öffentliche Installation & CI/CD
 
 **Status:** Geplant
-**Priorität:** Mittel
+**Priorität:** Hoch
+**Genehmigt:** 2025-12-22
 
-### Beschreibung
+### Ziel
 
-Verbesserungen für die öffentliche Nutzung des Projekts auf GitHub.
+Benutzer können die App mit einer einfachen `docker-compose.yml` starten, ohne den Source Code zu benötigen:
+
+```yaml
+services:
+  audiobookshelf-sonos-bridge:
+    image: ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest
+    network_mode: host
+    volumes:
+      - /path/to/audiobooks:/media:ro
+      - ./cache:/cache
+      - ./config:/config
+    environment:
+      - BRIDGE_ABS_URL=http://your-audiobookshelf:13378
+      - BRIDGE_PUBLIC_URL=http://your-server-ip:8080
+      - BRIDGE_SESSION_SECRET=your-32-character-secret-here
+      - TZ=Europe/Berlin
+    restart: unless-stopped
+```
 
 ### Erledigte Aufgaben (2025-12-22)
 
@@ -868,41 +406,152 @@ Verbesserungen für die öffentliche Nutzung des Projekts auf GitHub.
 - [x] LICENSE Datei erstellt (MIT)
 - [x] docker-compose.yml aufgeräumt (projektspezifische Volumes entfernt)
 
-### Offene Aufgaben
+---
 
-#### Phase 1: GitHub Actions CI/CD
+### Übersicht: Tag-basierte Container-Builds
 
-| # | Aufgabe | Beschreibung |
-|---|---------|--------------|
-| 1.1 | **GitHub Actions Workflow** | Automatischer Docker-Build bei git push/tag |
-| 1.2 | **Multi-Arch Build** | AMD64 + ARM64 für Raspberry Pi / Mac Silicon |
-| 1.3 | **ghcr.io Publishing** | Images unter `ghcr.io/knoellp/audiobookshelf-sonos-bridge` veröffentlichen |
-| 1.4 | **Versionierung** | `v1.0.0` Tags → Docker-Tags automatisch erstellen |
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         MANUELL                                 │
+│                                                                 │
+│   Entwicklung auf testing ──merge──► main                       │
+│         │                             │                         │
+│         │ git tag                     │ git tag                 │
+│         ▼                             ▼                         │
+│   testing-v1.1.0-rc1              v1.1.0                       │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                    │                             │
+                    ▼                             ▼
+            ┌─────────────────────────────────────────────────────┐
+            │                    AUTOMATISCH                      │
+            │                  (GitHub Actions)                   │
+            │                                                     │
+            │   :testing Tag                :1.1.0, :1.1, :latest │
+            │   (überschreibt vorherigen)   + GitHub Release      │
+            └─────────────────────────────────────────────────────┘
+```
 
-**Beispiel `.github/workflows/docker.yml`:**
+### Tag-Konventionen
+
+| Tag-Pattern | Beispiele | Image Tags | GitHub Release |
+|-------------|-----------|------------|----------------|
+| `testing-*` | `testing-v1.1.0-rc1`, `testing-20241222` | `:testing` | Nein |
+| `v*.*.*` | `v1.0.0`, `v1.1.0`, `v2.0.0` | `:1.1.0`, `:1.1`, `:1`, `:latest` | Ja (auto-generated notes) |
+
+**Warum diese Konvention?**
+- Git Tags sind commit-gebunden, nicht branch-gebunden
+- Durch unterschiedliche Prefixes ist klar, welcher Typ gemeint ist
+- `testing-*` Tags können beliebig oft erstellt werden (jeder überschreibt `:testing`)
+- `v*` Tags sind permanent und erzeugen Releases
+
+### Plattformen
+
+- `linux/amd64` (Standard-Server, Intel/AMD)
+- `linux/arm64` (Raspberry Pi 4/5, Apple Silicon)
+
+---
+
+### Ablauf: Testing-Container
+
+```
+1. Du bist auf testing Branch, Code ist bereit zum Testen
+
+2. Tag erstellen:
+   git tag testing-v1.1.0-rc1
+   git push --tags
+
+3. GitHub Actions triggert automatisch:
+   ┌────────────────────────────────────────┐
+   │ • Erkennt: testing-* Tag              │
+   │ • Baut Image (amd64 + arm64)          │
+   │ • Pusht zu ghcr.io:testing            │
+   │ • KEIN GitHub Release                 │
+   └────────────────────────────────────────┘
+
+4. Image verfügbar:
+   ghcr.io/knoellp/audiobookshelf-sonos-bridge:testing
+
+5. Testen auf Test-Server:
+   docker pull ghcr.io/knoellp/audiobookshelf-sonos-bridge:testing
+   docker compose up -d
+```
+
+### Ablauf: Production-Container + Release
+
+```
+1. Testing war erfolgreich, nach main mergen:
+   git checkout main
+   git merge testing
+   git push
+
+2. Release-Tag erstellen:
+   git tag v1.1.0
+   git push --tags
+
+3. GitHub Actions triggert automatisch:
+   ┌────────────────────────────────────────┐
+   │ • Erkennt: v* Tag                     │
+   │ • Baut Image (amd64 + arm64)          │
+   │ • Pusht zu ghcr.io mit Tags:          │
+   │   - :1.1.0                            │
+   │   - :1.1                              │
+   │   - :1                                │
+   │   - :latest                           │
+   │ • Erstellt GitHub Release             │
+   │   - Auto-generated Release Notes      │
+   └────────────────────────────────────────┘
+
+4. Images verfügbar:
+   ghcr.io/knoellp/audiobookshelf-sonos-bridge:1.1.0
+   ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest
+
+5. GitHub Release sichtbar unter:
+   https://github.com/knoellp/audiobookshelf-sonos-bridge/releases
+```
+
+---
+
+### Workflow-Struktur: `.github/workflows/docker-publish.yml`
+
 ```yaml
-name: Build and Push Docker Image
+name: Build and Publish Docker Image
 
 on:
   push:
-    tags: ['v*']
-  workflow_dispatch:
+    tags:
+      - 'testing-*'    # Testing-Container
+      - 'v*'           # Production-Container + Release
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: write      # Für Release-Erstellung
+      packages: write      # Für ghcr.io Push
+
     steps:
-      - uses: actions/checkout@v4
+      #─────────────────────────────────────────────────────────
+      # 1. Setup
+      #─────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+        # Ermöglicht ARM64 Cross-Compilation auf x86 Runner
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        # Multi-Platform Build Support
 
+      #─────────────────────────────────────────────────────────
+      # 2. Registry Login
+      #─────────────────────────────────────────────────────────
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -910,65 +559,889 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      #─────────────────────────────────────────────────────────
+      # 3. Metadata (Tags + Labels)
+      #─────────────────────────────────────────────────────────
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            # Testing Tags: testing-* → :testing
+            type=match,pattern=testing-.*,group=0,value=testing
+
+            # Release Tags: v1.2.3 → 1.2.3, 1.2, 1, latest
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      #─────────────────────────────────────────────────────────
+      # 4. Build Arguments vorbereiten
+      #─────────────────────────────────────────────────────────
+      - name: Prepare build arguments
+        id: prep
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="testing"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "commit=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
+      #─────────────────────────────────────────────────────────
+      # 5. Build und Push
+      #─────────────────────────────────────────────────────────
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.prep.outputs.version }}
+            COMMIT=${{ steps.prep.outputs.commit }}
+            BUILD_DATE=${{ steps.prep.outputs.build_date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      #─────────────────────────────────────────────────────────
+      # 6. GitHub Release (nur bei v* Tags)
+      #─────────────────────────────────────────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          # Auto-generated aus PR-Titles seit letztem Release
 ```
 
-#### Phase 2: Benutzerfreundlichkeit
+**Kein Trigger bei:**
+- Push auf testing Branch (ohne Tag)
+- Push auf main Branch (ohne Tag)
+- Pull Requests
+
+---
+
+### Dockerfile-Änderungen
+
+**Hinzufügen im Build-Stage:**
+```dockerfile
+# Build arguments für Versionierung
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+# In go build Befehl:
+RUN go build -ldflags="-s -w \
+    -X 'audiobookshelf-sonos-bridge/internal/version.Version=${VERSION}' \
+    -X 'audiobookshelf-sonos-bridge/internal/version.Commit=${COMMIT}' \
+    -X 'audiobookshelf-sonos-bridge/internal/version.BuildDate=${BUILD_DATE}'" \
+    -o /bridge ./cmd/bridge
+```
+
+**Hinzufügen im Runtime-Stage:**
+```dockerfile
+# OCI Labels für Registry
+ARG VERSION
+ARG COMMIT
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.title="Audiobookshelf Sonos Bridge"
+LABEL org.opencontainers.image.description="Stream audiobooks from Audiobookshelf to Sonos speakers"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.revision="${COMMIT}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL org.opencontainers.image.source="https://github.com/knoellp/audiobookshelf-sonos-bridge"
+LABEL org.opencontainers.image.licenses="MIT"
+```
+
+---
+
+### Neue Datei: `docker-compose.example.yml`
+
+```yaml
+# Audiobookshelf Sonos Bridge
+# Kopiere diese Datei nach docker-compose.yml und passe die Werte an
+
+services:
+  audiobookshelf-sonos-bridge:
+    image: ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest
+    container_name: abs-sonos-bridge
+
+    # Host-Netzwerk für Sonos UPnP Discovery (erforderlich!)
+    network_mode: host
+
+    volumes:
+      # Audiobooks (gleicher Pfad wie in Audiobookshelf)
+      - /pfad/zu/audiobooks:/media:ro
+      # Cache für transkodierte Dateien
+      - ./cache:/cache
+      # Konfiguration und Datenbank
+      - ./config:/config
+
+    environment:
+      # REQUIRED: Audiobookshelf Server URL
+      - BRIDGE_ABS_URL=http://localhost:13378
+
+      # REQUIRED: Öffentliche URL dieses Servers (für Sonos erreichbar)
+      - BRIDGE_PUBLIC_URL=http://192.168.1.100:8080
+
+      # REQUIRED: Geheimer Schlüssel (mindestens 32 Zeichen)
+      - BRIDGE_SESSION_SECRET=hier-mindestens-32-zeichen-secret
+
+      # Optional: Zeitzone
+      - TZ=Europe/Berlin
+
+      # Optional: Log-Level (debug, info, warn, error)
+      # - BRIDGE_LOG_LEVEL=info
+
+      # Optional: Anzahl Transcoding-Worker
+      # - BRIDGE_TRANSCODE_WORKERS=2
+
+    restart: unless-stopped
+```
+
+---
+
+### GitHub Repository Settings
+
+**Einmalig konfigurieren:**
+
+1. **Settings → Actions → General → Workflow permissions**
+   - [x] Read and write permissions
+   - [x] Allow GitHub Actions to create and approve pull requests
+
+2. **Nach erstem erfolgreichen Build:**
+   - Settings → Packages → `audiobookshelf-sonos-bridge`
+   - Visibility: Public (falls öffentlich gewünscht)
+
+---
+
+### Tag-Beispiele und Ergebnisse
+
+| Aktion | Befehl | Image Tags | Release |
+|--------|--------|------------|---------|
+| Erster Testing-Build | `git tag testing-v1.0.0-rc1 && git push --tags` | `:testing` | Nein |
+| Zweiter Testing-Build | `git tag testing-v1.0.0-rc2 && git push --tags` | `:testing` (überschreibt) | Nein |
+| Erstes Release | `git tag v1.0.0 && git push --tags` | `:1.0.0`, `:1.0`, `:1`, `:latest` | Ja |
+| Bugfix Release | `git tag v1.0.1 && git push --tags` | `:1.0.1`, `:1.0`, `:1`, `:latest` | Ja |
+| Feature Release | `git tag v1.1.0 && git push --tags` | `:1.1.0`, `:1.1`, `:1`, `:latest` | Ja |
+| Major Release | `git tag v2.0.0 && git push --tags` | `:2.0.0`, `:2.0`, `:2`, `:latest` | Ja |
+
+---
+
+### Typischer Entwicklungs-Workflow
+
+```bash
+# ═══════════════════════════════════════════════════════════════
+# PHASE 1: Entwicklung
+# ═══════════════════════════════════════════════════════════════
+
+# Auf testing Branch arbeiten
+git checkout testing
+# ... Code ändern ...
+git add . && git commit -m "Add volume control feature"
+git push
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 2: Testing-Container bauen
+# ═══════════════════════════════════════════════════════════════
+
+# Testing-Tag erstellen (triggert Build)
+git tag testing-v1.1.0-rc1
+git push --tags
+
+# Warten auf GitHub Actions...
+# Image: ghcr.io/knoellp/audiobookshelf-sonos-bridge:testing
+
+# Auf Test-Server deployen und testen
+docker pull ghcr.io/knoellp/audiobookshelf-sonos-bridge:testing
+docker compose up -d
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 3: Weitere Iterationen (optional)
+# ═══════════════════════════════════════════════════════════════
+
+# Bug gefunden, fixen
+git add . && git commit -m "Fix volume slider bug"
+git push
+
+# Neuer Testing-Build
+git tag testing-v1.1.0-rc2
+git push --tags
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 4: Production Release
+# ═══════════════════════════════════════════════════════════════
+
+# Nach main mergen
+git checkout main
+git merge testing
+git push
+
+# Release-Tag erstellen (triggert Build + Release)
+git tag v1.1.0
+git push --tags
+
+# Fertig! GitHub Actions:
+# - Baut Image
+# - Pusht :1.1.0, :1.1, :1, :latest
+# - Erstellt GitHub Release mit auto-generated notes
+```
+
+---
+
+### Implementierungs-Reihenfolge
+
+| # | Datei | Beschreibung |
+|---|-------|--------------|
+| 1 | `.github/workflows/docker-publish.yml` | Workflow erstellen |
+| 2 | `Dockerfile` | Build Args + Labels hinzufügen |
+| 3 | `docker-compose.example.yml` | End-User Template erstellen |
+| 4 | `README.md` | Quick-Start Sektion ergänzen |
+| 5 | GitHub Settings | Permissions setzen |
+| 6 | `git tag testing-v1.0.0-rc1` | Ersten Testing-Build auslösen |
+| 7 | Verifizieren | ghcr.io prüfen |
+| 8 | `git checkout main && git merge testing` | Nach main mergen |
+| 9 | `git tag v1.0.0` | Erstes Production Release |
+| 10 | Verifizieren | Release + Images prüfen |
+
+---
+
+### Release-Checkliste (für zukünftige Releases)
+
+```bash
+# 1. Sicherstellen dass testing stabil ist
+docker compose logs -f  # Auf testing-Server prüfen
+
+# 2. Nach main mergen
+git checkout main
+git pull
+git merge testing
+git push
+
+# 3. Tag erstellen
+git tag v1.1.0
+git push --tags
+
+# 4. GitHub Actions überwachen
+# → https://github.com/knoellp/audiobookshelf-sonos-bridge/actions
+
+# 5. Release verifizieren
+# → https://github.com/knoellp/audiobookshelf-sonos-bridge/releases
+# → https://ghcr.io/knoellp/audiobookshelf-sonos-bridge
+```
+
+---
+
+### Spätere Erweiterungen (optional)
 
 | # | Aufgabe | Beschreibung |
 |---|---------|--------------|
-| 2.1 | **Startup-Validierung** | Beim Start prüfen: ffmpeg vorhanden? ABS erreichbar? |
-| 2.2 | **HEALTHCHECK fixen** | Port dynamisch oder entfernen (Docker health via /health reicht) |
-| 2.3 | **Quickstart Guide** | Vereinfachte 5-Minuten-Anleitung |
+| 1 | **Startup-Validierung** | Beim Start prüfen: ffmpeg vorhanden? ABS erreichbar? |
+| 2 | **Helm Chart** | Für Kubernetes-Nutzer |
+| 3 | **Unraid Template** | Für Unraid Community Apps |
+| 4 | **Config Wizard** | Web-UI zur Erstkonfiguration |
 
-**Startup-Validierung Beispiel:**
+---
+
+## Lokale Browser-Wiedergabe
+
+**Status:** Geplant
+**Priorität:** Hoch
+**Genehmigt:** 2025-12-22
+
+### Übersicht
+
+Zusätzlich zur Sonos-Wiedergabe soll die Web-App auch lokale Wiedergabe im Browser unterstützen - genau wie Audiobookshelf selbst.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AKTUELLE ARCHITEKTUR                         │
+│                                                                 │
+│   Browser ──HTTP──► Bridge ──UPnP──► Sonos                     │
+│   (Fernbedienung)           (Streaming)                         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+                              ▼
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    ERWEITERTE ARCHITEKTUR                       │
+│                                                                 │
+│   Browser ──HTTP──► Bridge ──UPnP──► Sonos                     │
+│      │              (Streaming)                                 │
+│      │                                                          │
+│      └──HTML5 Audio──► Bridge Cache                            │
+│        (Lokale Wiedergabe)                                      │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Kernkonzepte
+
+#### Eine Session pro User
+
+- Jeder User kann nur **eine aktive Playback-Session** haben
+- Bei Wechsel des Targets (Sonos → Browser oder umgekehrt) wird die alte Session gestoppt
+- Progress wird vor dem Stoppen zu Audiobookshelf synchronisiert
+- User ist gedacht als Mensch - niemand hört zwei Hörbücher gleichzeitig
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  User "Peter" hört auf Sonos Küche                              │
+│                                                                 │
+│  Peter klickt "Play" auf iPhone (Browser)                      │
+│                              ↓                                  │
+│  1. Sonos Küche → STOP + Progress Sync                         │
+│  2. Alte PlaybackSession → Cleanup                             │
+│  3. Neue PlaybackSession → Browser                             │
+│  4. Audio startet im Browser                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Sonos und Browser nicht gleichzeitig
+
+- Wenn User auf Browser-Playback wechselt → Sonos stoppt automatisch
+- Wenn User auf Sonos wechselt → Browser-Playback stoppt
+- Verhindert Konflikte bei Progress-Sync
+
+---
+
+### Streaming-Strategie
+
+**Phase 1: Eigenen Cache nutzen**
+
+| Aspekt | Details |
+|--------|---------|
+| Quelle | `/cache/{item_id}/audio.{ext}` |
+| Vorteile | Bereits vorhanden, kein zusätzliches Transcoding, offline-fähig |
+| Nachteile | Keine Kapitel-Navigation (ein File = ganzes Buch) |
+| Seeking | Via HTTP Range Requests (bereits implementiert) |
+
+**Phase 2 (später): ABS Direct Stream**
+
+| Aspekt | Details |
+|--------|---------|
+| Quelle | ABS `/api/items/{id}/play` → HLS/Direct |
+| Vorteile | Kapitelweise Navigation, kein lokaler Cache nötig |
+| Nachteile | Zusätzliche API-Komplexität, ABS muss erreichbar sein |
+
+---
+
+### UI-Konzept
+
+#### Player-Auswahl (erweitert)
+
+```
+┌─────────────────────────────────────┐
+│  Player auswählen               ↻   │
+├─────────────────────────────────────┤
+│  📱 Dieses Gerät                    │  ← NEU
+│  ─────────────────────────────────  │
+│  🔊 Sonos Geräte                    │
+│  ○ Kamin [+1]                       │
+│  ○ Küche                            │
+│  ○ Bad                              │
+└─────────────────────────────────────┘
+```
+
+**Hinweise bei "Dieses Gerät":**
+- Kann nicht mit Sonos gruppiert werden
+- Wiedergabe stoppt wenn Tab geschlossen wird (außer mit Media Session)
+- Progress wird zu Audiobookshelf synchronisiert
+
+#### Browser-Player UI
+
+**Desktop:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  ┌─────────┐                                                    │
+│  │         │  Der Herr der Ringe                                │
+│  │  Cover  │  J.R.R. Tolkien                                    │
+│  │         │  Gelesen von Gert Heidenreich                      │
+│  └─────────┘                                                    │
+│                                                                 │
+│  ━━━━━━━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
+│  2:34:12                                              12:45:30  │
+│                                                                 │
+│              ◀️30s      ▶️⏸️      30s▶️                         │
+│                                                                 │
+│  🔊 ━━━━━━━━━━━━━━━━━━━━━━━ 75%                                 │
+│                                                                 │
+│  Geschwindigkeit: [0.75x] [1x] [1.25x] [1.5x] [2x]             │
+│                                                                 │
+│  😴 Sleep Timer: Aus  [Einstellen]                              │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Mobile:**
+```
+┌───────────────────────────────┐
+│  Der Herr der Ringe           │
+│  ━━━━━━━━●━━━━━━━━━━━━━━━━━━  │
+│  2:34:12          12:45:30    │
+│                               │
+│     ◀️30   ▶️⏸️   30▶️        │
+│                               │
+│  🔊━━━━━━━━━ 75%    1x ▼      │
+│                               │
+│  😴 Sleep: 30 Min             │
+└───────────────────────────────┘
+```
+
+---
+
+### Media Session API
+
+Die Media Session API ermöglicht native OS-Integration für Mediensteuerung.
+
+**Was sie ermöglicht:**
+
+| Gerät/OS | Wo sichtbar |
+|----------|-------------|
+| iPhone/iPad | Lock Screen, Control Center, CarPlay |
+| Android | Notification, Lock Screen, Quick Settings |
+| macOS | Control Center, Touch Bar, Now Playing Widget |
+| Windows | System Media Controls, Bluetooth Geräte |
+
+**Zusätzliche Vorteile:**
+- Bluetooth-Kopfhörer Play/Pause-Taste funktioniert
+- AirPods Doppeltippen = Skip
+- Keyboard Media Keys (⏯️ ⏮️ ⏭️) funktionieren
+
+**Beispiel Lock Screen (iPhone):**
+```
+┌─────────────────────────────────────┐
+│  iPhone Sperrbildschirm             │
+│  ┌─────────────────────────────┐   │
+│  │  🎧 Der Herr der Ringe      │   │
+│  │     J.R.R. Tolkien          │   │
+│  │  ┌────────┐                 │   │
+│  │  │ Cover  │  ▶️ ABS-Sonos   │   │
+│  │  └────────┘     Bridge      │   │
+│  │                              │   │
+│  │  ◀️◀️    ▶️⏸️    ▶️▶️       │   │
+│  │  ━━━━━━━━━●━━━━━━━━━━       │   │
+│  └─────────────────────────────┘   │
+└─────────────────────────────────────┘
+```
+
+---
+
+### Sleep Timer (Server-Side)
+
+Der Sleep Timer wird server-side implementiert, da:
+- Sonos nur vom Server gestoppt werden kann (UPnP)
+- Konsistentes Verhalten für beide Targets (Sonos + Browser)
+
+**Architektur:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  User stellt Timer: 30 Minuten                                 │
+│                              ↓                                  │
+│  PlaybackSession.SleepAt = now() + 30min                       │
+│                              ↓                                  │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  SleepTimerWorker (Background Goroutine)                │   │
+│  │                                                          │   │
+│  │  Alle 10 Sekunden:                                       │   │
+│  │  FOR each session WHERE SleepAt != NULL:                 │   │
+│  │      IF now() >= SleepAt:                                │   │
+│  │          IF target == SONOS:                             │   │
+│  │              → Send UPnP Pause                           │   │
+│  │          IF target == BROWSER:                           │   │
+│  │              → Set session.SleepTriggered = true         │   │
+│  │          → Sync progress to ABS                          │   │
+│  │          → Clear SleepAt                                 │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Für Browser-Playback:**
+
+```
+Browser sendet Position-Update alle 5 Sekunden:
+
+POST /play/browser/position
+{ position: 1234.5, playing: true }
+
+Server prüft: session.SleepTriggered == true?
+                    ↓
+Response: { shouldStop: true, reason: "sleep_timer" }
+                    ↓
+Browser: audio.pause();
+         showNotification("Sleep Timer abgelaufen");
+```
+
+**Sleep Timer UI:**
+
+```
+┌─────────────────────────────────────┐
+│  Sleep Timer                    ✕   │
+├─────────────────────────────────────┤
+│                                     │
+│  ○ Aus                              │
+│  ○ 15 Minuten                       │
+│  ● 30 Minuten  ← Ausgewählt        │
+│  ○ 45 Minuten                       │
+│  ○ 60 Minuten                       │
+│  ○ 90 Minuten                       │
+│  ○ 120 Minuten                      │
+│                                     │
+│  Verbleibend: 24:32                 │
+│                                     │
+└─────────────────────────────────────┘
+```
+
+**API Endpoints:**
+
+| Endpoint | Methode | Beschreibung |
+|----------|---------|--------------|
+| `POST /sleep-timer` | POST | Timer setzen: `{ minutes: 30 }` |
+| `DELETE /sleep-timer` | DELETE | Timer löschen |
+| `GET /sleep-timer` | GET | Verbleibende Zeit abfragen |
+
+---
+
+### AirPlay und Google Cast
+
+**Gute Nachricht:** AirPlay und Google Cast sind "gratis" wenn wir Browser-Playback haben!
+
+**Wie es funktioniert:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AIRPLAY VIA BROWSER                          │
+│                                                                 │
+│   ┌──────────────────┐                                          │
+│   │  iPhone Safari   │                                          │
+│   │                  │                                          │
+│   │  <audio> Element │──── AirPlay ────► HomePod / Apple TV    │
+│   │                  │     (natives iOS)                        │
+│   └──────────────────┘                                          │
+│                                                                 │
+│   Der Browser spielt das Audio ab.                              │
+│   iOS bietet nativ AirPlay an.                                  │
+│   Wir müssen NICHTS implementieren!                             │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Browser-Unterstützung:**
+
+| Browser | AirPlay | Google Cast | Bemerkung |
+|---------|---------|-------------|-----------|
+| Safari macOS | ✅ Nativ | ❌ | AirPlay über Menüleiste |
+| Safari iOS | ✅ Nativ | ❌ | AirPlay-Button im Player |
+| Chrome | ❌ | ✅ Nativ | Cast-Button im Browser |
+| Chrome Android | ❌ | ✅ Nativ | Cast-Button im Player |
+| Firefox | ❌ | ❌ | Keine Cast-Unterstützung |
+| Edge | ❌ | ✅ | Über Chromium |
+
+**Streaming-Methoden im Vergleich:**
+
+```
+SONOS (Remote Rendering)
+────────────────────────
+Bridge ──Stream URL──► Sonos ──Audio──► Lautsprecher
+Sonos holt sich den Stream selbst
+
+BROWSER (Local Rendering)
+─────────────────────────
+Bridge ──Stream──► Browser ──Audio──► Gerät-Lautsprecher
+Browser spielt ab, Audio kommt aus dem Gerät
+
+AIRPLAY via BROWSER (Local + Cast)
+──────────────────────────────────
+Bridge ──Stream──► Browser ──AirPlay──► HomePod
+Browser spielt ab, iOS streamt zu AirPlay
+```
+
+**Keine Gruppierung:**
+- AirPlay-Geräte können nicht mit Sonos gruppiert werden
+- Das ist technisch nicht möglich (unterschiedliche Protokolle)
+- Kein zusätzlicher Implementierungsaufwand
+
+---
+
+### Technische Architektur
+
+#### Backend-Änderungen
+
+**1. PlaybackSession erweitern (`internal/store/playback.go`):**
+
 ```go
-func validateStartup(cfg *config.Config) error {
-    // Check ffmpeg
-    if _, err := exec.LookPath("ffmpeg"); err != nil {
-        return fmt.Errorf("ffmpeg not found in PATH")
-    }
+type PlaybackTarget string
 
-    // Check ABS connectivity
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
+const (
+    TargetSonos   PlaybackTarget = "sonos"
+    TargetBrowser PlaybackTarget = "browser"
+)
 
-    resp, err := http.Get(cfg.ABSURL + "/ping")
-    if err != nil {
-        return fmt.Errorf("cannot reach Audiobookshelf at %s: %w", cfg.ABSURL, err)
-    }
-    defer resp.Body.Close()
+type PlaybackSession struct {
+    // ... bestehende Felder ...
 
-    if resp.StatusCode != 200 {
-        return fmt.Errorf("Audiobookshelf returned status %d", resp.StatusCode)
-    }
+    // Target-Typ
+    Target         PlaybackTarget  // "sonos" oder "browser"
 
-    return nil
+    // Browser-spezifisch
+    BrowserPlaying bool            // Aktueller Play-State
+
+    // Sleep Timer (für beide Targets)
+    SleepAt        *time.Time      // NULL = kein Timer
+    SleepTriggered bool            // Für Browser: Signal zum Stoppen
 }
 ```
 
-#### Phase 3: Fortgeschritten (optional)
+**2. Neue Endpoints:**
+
+| Endpoint | Methode | Beschreibung |
+|----------|---------|--------------|
+| `POST /play/browser` | POST | Startet Browser-Wiedergabe |
+| `GET /play/browser/status` | GET | Status für Browser-Player |
+| `POST /play/browser/position` | POST | Position-Update vom Browser |
+| `POST /play/browser/pause` | POST | Pause im Browser |
+| `POST /play/browser/resume` | POST | Resume im Browser |
+| `POST /sleep-timer` | POST | Sleep Timer setzen |
+| `DELETE /sleep-timer` | DELETE | Sleep Timer löschen |
+| `GET /sleep-timer` | GET | Verbleibende Zeit |
+
+**3. Neue Background Worker:**
+
+- `SleepTimerWorker`: Prüft alle 10s ob Timer abgelaufen
+
+#### Frontend-Änderungen
+
+**1. Neues Partial: `web/templates/partials/browser-player.html`**
+
+```html
+<div id="browser-player" class="hidden">
+    <audio id="audio-element"
+           x-webkit-airplay="allow"
+           preload="metadata">
+    </audio>
+
+    <!-- Custom Controls -->
+    <div class="player-controls">
+        <!-- Progress Bar -->
+        <input type="range" id="seek-slider" />
+
+        <!-- Transport -->
+        <button id="skip-back">-30s</button>
+        <button id="play-pause">▶️</button>
+        <button id="skip-forward">+30s</button>
+
+        <!-- Volume -->
+        <input type="range" id="volume-slider" />
+
+        <!-- Playback Speed -->
+        <select id="playback-rate">
+            <option value="0.75">0.75x</option>
+            <option value="1" selected>1x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2x</option>
+        </select>
+
+        <!-- Sleep Timer -->
+        <button id="sleep-timer-btn">😴</button>
+    </div>
+</div>
+```
+
+**2. JavaScript-Klasse: `web/static/js/browser-player.js`**
+
+```javascript
+class BrowserPlayer {
+    constructor(audioElement) {
+        this.audio = audioElement;
+        this.sessionId = null;
+        this.positionSyncInterval = null;
+    }
+
+    async play(streamUrl, startPosition) {
+        this.audio.src = streamUrl;
+        this.audio.currentTime = startPosition;
+        await this.audio.play();
+        this.setupMediaSession();
+        this.startPositionSync();
+    }
+
+    setupMediaSession() {
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: this.bookTitle,
+                artist: this.author,
+                artwork: [{ src: this.coverUrl }]
+            });
+
+            navigator.mediaSession.setActionHandler('play', () => this.resume());
+            navigator.mediaSession.setActionHandler('pause', () => this.pause());
+            navigator.mediaSession.setActionHandler('seekbackward', () => this.skip(-30));
+            navigator.mediaSession.setActionHandler('seekforward', () => this.skip(30));
+        }
+    }
+
+    startPositionSync() {
+        this.positionSyncInterval = setInterval(async () => {
+            const response = await this.syncPosition();
+            if (response.shouldStop) {
+                this.pause();
+                this.showNotification(response.reason);
+            }
+        }, 5000);
+    }
+
+    async syncPosition() {
+        return fetch('/play/browser/position', {
+            method: 'POST',
+            body: JSON.stringify({
+                position: this.audio.currentTime,
+                playing: !this.audio.paused
+            })
+        }).then(r => r.json());
+    }
+}
+```
+
+---
+
+### Datenfluss
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. User wählt "Dieses Gerät" als Player                         │
+│    → localStorage.selectedPlayer = { type: "browser" }          │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. User klickt "Play" auf einem Buch                            │
+│                                                                 │
+│    POST /play/browser                                           │
+│    Body: { itemId: "abc123" }                                   │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. Backend:                                                     │
+│    - Prüft auf existierende Session (stoppt ggf. Sonos)        │
+│    - Prüft Cache (wie bei Sonos)                               │
+│    - Holt gespeicherte Position von ABS                        │
+│    - Erstellt PlaybackSession (Target: browser)                │
+│    - Generiert Stream-Token                                     │
+│    - Gibt zurück: { streamUrl, position, duration, metadata }  │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 4. Frontend:                                                    │
+│    - Setzt <audio src="streamUrl">                             │
+│    - Springt zu gespeicherter Position                         │
+│    - Startet Wiedergabe                                         │
+│    - Registriert Media Session (Lock Screen Controls)          │
+│    - Startet Position-Sync (alle 5s)                           │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 5. Während Wiedergabe:                                          │
+│                                                                 │
+│    Browser ──POST /play/browser/position──► Backend            │
+│             { position: 1234.5, playing: true }                │
+│                              ↓                                  │
+│    Backend prüft:                                               │
+│    - Sleep Timer abgelaufen? → { shouldStop: true }            │
+│    - Sync zu ABS (alle 30 Sekunden)                            │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 6. Bei Pause/Stop:                                              │
+│    - Sofortiger Sync zu ABS                                    │
+│    - Session cleanup (bei Stop)                                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Browser-Kompatibilität
+
+| Browser | MP3 | AAC (M4A) | FLAC | Media Session |
+|---------|-----|-----------|------|---------------|
+| Chrome | ✅ | ✅ | ✅ | ✅ |
+| Safari | ✅ | ✅ | ❌ | ✅ |
+| Firefox | ✅ | ✅ | ✅ | ✅ |
+| Safari iOS | ✅ | ✅ | ❌ | ✅ |
+| Chrome Android | ✅ | ✅ | ✅ | ✅ |
+
+**Hinweis:** Safari unterstützt kein FLAC nativ. Für Safari-User würden FLAC-Bücher zu MP3 transkodiert (nicht nur gemuxt).
+
+---
+
+### Phasen der Implementierung
+
+#### Phase 1: Basis-Player
 
 | # | Aufgabe | Beschreibung |
 |---|---------|--------------|
-| 3.1 | **Helm Chart** | Für Kubernetes-Nutzer |
-| 3.2 | **Unraid Template** | Für Unraid Community Apps |
-| 3.3 | **Config Wizard** | Web-UI zur Erstkonfiguration |
+| 1.1 | PlaybackSession erweitern | `Target` und `SleepAt` Fields |
+| 1.2 | Eine-Session-pro-User Logik | Alte Session stoppen bei neuem Play |
+| 1.3 | `POST /play/browser` Endpoint | Startet Browser-Session |
+| 1.4 | `POST /play/browser/position` Endpoint | Position-Updates |
+| 1.5 | `POST /play/browser/pause` Endpoint | Pause-Handling |
+| 1.6 | Player-Picker erweitern | "Dieses Gerät" Option |
+| 1.7 | Browser-Player Partial | HTML + CSS |
+| 1.8 | `BrowserPlayer` JS-Klasse | Audio-Steuerung |
+| 1.9 | Progress Sync | Browser-Sessions zu ABS syncen |
 
-### Geschätzter Aufwand
+#### Phase 2: Sleep Timer
 
-| Komponente | Aufwand |
-|------------|---------|
-| GitHub Actions Workflow | 1-2h |
-| Multi-Arch Build testen | 1h |
-| Startup-Validierung | 1h |
-| HEALTHCHECK fix | 15min |
-| **Gesamt Phase 1+2** | **3-5h** |
+| # | Aufgabe | Beschreibung |
+|---|---------|--------------|
+| 2.1 | `SleepTimerWorker` | Background Goroutine |
+| 2.2 | Sleep Timer Endpoints | POST/DELETE/GET |
+| 2.3 | Sleep Timer UI | Modal mit Optionen |
+| 2.4 | Sonos-Integration | Sleep Timer auch für Sonos |
+
+#### Phase 3: Erweiterte Features
+
+| # | Aufgabe | Beschreibung |
+|---|---------|--------------|
+| 3.1 | Media Session API | Lock Screen Controls |
+| 3.2 | Playback Speed | 0.5x - 2x |
+| 3.3 | Skip-Buttons | ±30s, ±10s |
+| 3.4 | Volume-Slider | Lokale Lautstärke |
+| 3.5 | Keyboard Shortcuts | Space, Pfeiltasten |
+| 3.6 | Responsive UI | Mobile-optimiert |
+
+#### Phase 4: Optimierungen (optional)
+
+| # | Aufgabe | Beschreibung |
+|---|---------|--------------|
+| 4.1 | Kapitel-Navigation | Via ABS Direct Stream |
+| 4.2 | Lesezeichen | Manuelle Marker |
+| 4.3 | Offline-Mode | Service Worker |
+
+---
+
+### Vergleich: Sonos vs. Browser
+
+| Aspekt | Sonos | Browser |
+|--------|-------|---------|
+| Steuerung | UPnP SOAP | HTML5 Audio API |
+| Stream-Quelle | Cache via HTTP | Cache via HTTP (identisch) |
+| Volume | Sonos-Hardware | Browser/OS Volume |
+| Seek | AVTransport Seek | `audio.currentTime` |
+| Status-Polling | UPnP GetPositionInfo | JavaScript `timeupdate` Event |
+| Gruppierung | Ja (Sonos Groups) | Nein |
+| Sleep Timer | Server-side (UPnP Stop) | Server-side (Signal via Response) |
+| Background Play | Immer aktiv | Media Session API |
+| Lock Screen | N/A | Media Session API |
+| AirPlay | Nein | Ja (Safari/iOS nativ) |
+| Google Cast | Nein | Ja (Chrome nativ) |

@@ -4,6 +4,7 @@ import (
 	"context"
 	"html/template"
 	"net/http"
+	"sort"
 	"time"
 
 	"audiobookshelf-sonos-bridge/internal/sonos"
@@ -67,6 +68,65 @@ func (h *SonosHandler) HandleGetDevices(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Sort devices alphabetically by name
+	sort.Slice(deviceList, func(i, j int) bool {
+		return deviceList[i].Name < deviceList[j].Name
+	})
+
+	// Render HTML template for htmx
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := map[string]interface{}{
+		"Devices": deviceList,
+	}
+	if err := h.templates.ExecuteTemplate(w, "sonos-device-list", data); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+	}
+}
+
+// HandleQuickRefresh quickly updates group info from Sonos and returns updated HTML.
+// This is much faster than HandleRefreshDevices as it doesn't do SSDP discovery.
+func (h *SonosHandler) HandleQuickRefresh(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	// Quick refresh group info from ZoneGroupTopology
+	_ = h.discovery.RefreshGroupInfo(ctx)
+
+	// Get updated devices from store
+	devices, err := h.discovery.GetDevices()
+	if err != nil {
+		http.Error(w, "Failed to get devices", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to template format
+	deviceList := make([]DeviceResponse, len(devices))
+	for i, d := range devices {
+		groupSize := d.GroupSize
+		if groupSize == 0 {
+			groupSize = 1
+		}
+		deviceList[i] = DeviceResponse{
+			UUID:        d.UUID,
+			Name:        d.Name,
+			IPAddress:   d.IPAddress,
+			Model:       d.Model,
+			IsReachable: d.IsReachable,
+			GroupSize:   groupSize,
+		}
+	}
+
+	// Sort devices alphabetically by name
+	sort.Slice(deviceList, func(i, j int) bool {
+		return deviceList[i].Name < deviceList[j].Name
+	})
+
 	// Render HTML template for htmx
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := map[string]interface{}{
@@ -111,6 +171,11 @@ func (h *SonosHandler) HandleRefreshDevices(w http.ResponseWriter, r *http.Reque
 			GroupSize:   groupSize,
 		}
 	}
+
+	// Sort devices alphabetically by name
+	sort.Slice(deviceList, func(i, j int) bool {
+		return deviceList[i].Name < deviceList[j].Name
+	})
 
 	// Render HTML template for htmx
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
