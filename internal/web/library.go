@@ -342,10 +342,9 @@ func (h *LibraryHandler) HandleItem(w http.ResponseWriter, r *http.Request) {
 
 	// Calculate remaining time
 	progressPct := int(progressPercent * 100)
-	remainingMin := 0
+	remainingSec := 0
 	if totalDuration > 0 {
-		remainingSec := totalDuration * (1.0 - progressPercent)
-		remainingMin = int(remainingSec / 60)
+		remainingSec = int(totalDuration * (1.0 - progressPercent))
 	}
 
 	// Build simplified item with description
@@ -359,7 +358,7 @@ func (h *LibraryHandler) HandleItem(w http.ResponseWriter, r *http.Request) {
 		DurationSec:  int(totalDuration),
 		Progress:     progressPercent,
 		ProgressPct:  progressPct,
-		RemainingMin: remainingMin,
+		RemainingSec: remainingSec,
 	}
 
 	data := map[string]interface{}{
@@ -384,7 +383,7 @@ type DetailedItem struct {
 	DurationSec  int
 	Progress     float64
 	ProgressPct  int // Progress as percentage (0-100)
-	RemainingMin int // Remaining minutes to listen
+	RemainingSec int // Remaining seconds to listen
 }
 
 func getAuthorName(item *abs.LibraryItem) string {

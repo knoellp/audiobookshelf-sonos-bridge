@@ -132,6 +132,33 @@ Chapters were shown as "Kapitel: [title]" which was redundant when title was jus
 
 ---
 
+## Issue 11: Progress Not Synced on Pause - COMPLETED
+
+### Problem
+Wenn der Benutzer pausiert und zur Bibliothek zurückkehrt, wird beim erneuten Abspielen nicht an der gleichen Stelle fortgesetzt.
+
+### Ursache
+`HandlePause` (player.go) hat:
+1. Keine aktuelle Position von Sonos geholt
+2. Nicht zu Audiobookshelf synchronisiert
+
+Der Hintergrund-Syncer synchronisiert nur alle 30 Sekunden. Bei Pause gingen bis zu 30 Sekunden verloren.
+
+### Lösung
+`HandlePause` erweitert um dieselbe Logik wie `HandleStop`:
+1. Position von Sonos holen (VOR dem Pausieren für Genauigkeit)
+2. Lokale DB aktualisieren (mit korrekter Segment-Berechnung)
+3. Sofort zu ABS synchronisieren
+
+### Geänderte Dateien
+- `internal/web/player.go` - HandlePause erweitert (Zeilen 336-420)
+
+### Zusätzliche Analyse
+- `HandlePlay` holt bereits frische Daten von ABS (Zeile 199-204) ✅
+- ABS bleibt die Single Source of Truth ✅
+
+---
+
 ## Issue 7: Player Switch & Stop Issues - IN PROGRESS
 
 ### Problem 1: Player switch doesn't start playback

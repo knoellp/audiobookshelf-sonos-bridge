@@ -192,7 +192,6 @@ function getCurrentChapterWithIndex(positionSec) {
 function updateCurrentChapterDisplay(positionSec) {
     const numberEl = document.getElementById('chapter-number');
     const titleEl = document.getElementById('chapter-title');
-    if (!numberEl && !titleEl) return;
 
     const { chapter, index } = getCurrentChapterWithIndex(positionSec);
     if (chapter) {
@@ -213,7 +212,24 @@ function updateCurrentChapterDisplay(positionSec) {
                 titleEl.style.display = 'none';
             }
         }
+
+        // Highlight current chapter in the chapter list
+        highlightCurrentChapter(index);
     }
+}
+
+function highlightCurrentChapter(currentIndex) {
+    const chapterList = document.getElementById('chapter-list');
+    if (!chapterList) return;
+
+    const items = chapterList.querySelectorAll('.chapter-item');
+    items.forEach((item, i) => {
+        if (i === currentIndex) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+    });
 }
 
 function onProgressChange(value) {
@@ -594,6 +610,22 @@ function updateVolumeUI(volume, muted) {
 
 .chapter-item:hover {
     background: var(--bg-card);
+}
+
+.chapter-item.active {
+    background: #1db95420; /* --primary with 12.5% opacity */
+    border-left: 3px solid var(--primary);
+    padding-left: calc(0.75rem - 3px);
+}
+
+.chapter-item.active .chapter-number {
+    background: var(--primary);
+    color: white;
+}
+
+.chapter-item.active .chapter-name {
+    color: var(--primary);
+    font-weight: 600;
 }
 
 .chapter-number {

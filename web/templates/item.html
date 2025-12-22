@@ -37,7 +37,7 @@
                         <circle cx="12" cy="12" r="10"></circle>
                         <polyline points="12 6 12 12 16 14"></polyline>
                     </svg>
-                    {{formatDuration .Item.DurationSec}}{{if gt .Item.ProgressPct 0}} · {{.Item.ProgressPct}}% · {{formatDuration (mult .Item.RemainingMin 60)}} verbleibend{{end}}
+                    {{formatDuration .Item.DurationSec}}{{if gt .Item.ProgressPct 0}} · {{.Item.ProgressPct}}% · {{formatDuration .Item.RemainingSec}} verbleibend{{end}}
                 </span>
                 <span class="meta-item cache-status-meta" id="cache-status-container">
                     <span id="cache-status-badge"></span>

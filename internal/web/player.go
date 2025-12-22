@@ -360,9 +360,28 @@ func (h *PlayerHandler) HandlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
 	avt := sonos.NewAVTransport(device.IPAddress)
 
-	if err := avt.Pause(r.Context()); err != nil {
+	// Get current position BEFORE pausing (most accurate)
+	posInfo, _ := avt.GetPositionInfo(ctx)
+	if posInfo != nil {
+		localPos := int(sonos.ParseDuration(posInfo.RelTime).Seconds())
+
+		// Calculate global position for segmented playback
+		var globalPos int
+		if playback.SegmentDurationSec > 0 {
+			globalPos = store.SegmentToGlobal(playback.CurrentSegment, localPos, playback.SegmentDurationSec)
+		} else {
+			globalPos = localPos
+		}
+
+		playback.PositionSec = globalPos
+		h.playbackStore.UpdatePosition(playback.ID, globalPos)
+	}
+
+	// Pause on Sonos
+	if err := avt.Pause(ctx); err != nil {
 		// Error 701 = "Transition not available" - device is already paused/stopped
 		if strings.Contains(err.Error(), "errorCode>701") {
 			slog.Debug("pause not needed - device already paused/stopped")
@@ -375,6 +394,27 @@ func (h *PlayerHandler) HandlePause(w http.ResponseWriter, r *http.Request) {
 
 	// Update status
 	h.playbackStore.UpdatePlaying(playback.ID, false)
+
+	// Sync progress to ABS immediately (like HandleStop does)
+	if playback.PositionSec > 0 && playback.DurationSec > 0 {
+		absClient, err := h.authHandler.GetABSClientForSession(session)
+		if err == nil {
+			progress := abs.ProgressUpdate{
+				CurrentTime: float64(playback.PositionSec),
+				Duration:    float64(playback.DurationSec),
+				Progress:    float64(playback.PositionSec) / float64(playback.DurationSec),
+			}
+			if err := absClient.UpdateProgress(ctx, playback.ItemID, progress); err != nil {
+				slog.Warn("failed to sync progress to ABS on pause", "error", err)
+			} else {
+				slog.Debug("synced progress to ABS on pause",
+					"item_id", playback.ItemID,
+					"position_sec", playback.PositionSec,
+					"progress_pct", int(progress.Progress*100),
+				)
+			}
+		}
+	}
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -562,6 +602,44 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 
 	avt := sonos.NewAVTransport(device.IPAddress)
 
+	// Fetch latest progress from ABS (single source of truth)
+	var absPositionSec int
+	absClient, err := h.authHandler.GetABSClientForSession(session)
+	if err == nil {
+		progress, err := absClient.GetProgress(ctx, playback.ItemID)
+		if err == nil && progress != nil {
+			absPositionSec = int(progress.CurrentTime)
+			slog.Debug("fetched ABS progress on resume",
+				"item_id", playback.ItemID,
+				"abs_position_sec", absPositionSec,
+				"local_position_sec", playback.PositionSec,
+			)
+		}
+	}
+
+	// Check if ABS has a different position (user listened elsewhere)
+	needsSeek := false
+	var targetPosition int
+	if absPositionSec > 0 {
+		diff := absPositionSec - playback.PositionSec
+		if diff < 0 {
+			diff = -diff
+		}
+		// If difference is more than 5 seconds, use ABS position
+		if diff > 5 {
+			needsSeek = true
+			targetPosition = absPositionSec
+			slog.Info("position changed in ABS, will seek after resume",
+				"item_id", playback.ItemID,
+				"local_position", playback.PositionSec,
+				"abs_position", absPositionSec,
+				"diff_sec", diff,
+			)
+			// Update local position
+			h.playbackStore.UpdatePosition(playback.ID, absPositionSec)
+		}
+	}
+
 	if err := avt.Play(ctx); err != nil {
 		// Error 701 = "Transition not available" - device may already be playing
 		if strings.Contains(err.Error(), "errorCode>701") {
@@ -570,6 +648,24 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 			slog.Error("failed to resume", "error", err)
 			http.Error(w, "failed to resume", http.StatusInternalServerError)
 			return
+		}
+	}
+
+	// Seek to ABS position if it changed
+	if needsSeek {
+		// For segmented playback, calculate local position within segment
+		var seekPosition int
+		if playback.SegmentDurationSec > 0 {
+			_, seekPosition = store.GlobalToSegment(targetPosition, playback.SegmentDurationSec)
+		} else {
+			seekPosition = targetPosition
+		}
+
+		time.Sleep(300 * time.Millisecond) // Brief delay for playback to start
+		if err := avt.Seek(ctx, time.Duration(seekPosition)*time.Second); err != nil {
+			slog.Warn("failed to seek to ABS position on resume", "error", err)
+		} else {
+			slog.Debug("seeked to ABS position on resume", "position_sec", seekPosition)
 		}
 	}
 
