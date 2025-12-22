@@ -26,6 +26,4 @@ services:
       - ${CACHE_PATH:-./cache}:/cache:rw
       # Read-write for config and database
       - ${CONFIG_PATH:-./config}:/config:rw
-      # Additional media path for Hörspiele
-      - ${HOERSPIELE_PATH:-./hoerspiele}:/hoerspiele:ro
     restart: unless-stopped

@@ -12,7 +12,6 @@ Audiobookshelf Sonos Bridge - A local service that enables audiobook playback fr
 
 ### App starten (Build + Run):
 ```bash
-cd /home/knoellp/develop/server/audiobook-streamer
 docker compose up --build -d
 ```
 
@@ -137,15 +136,24 @@ Host network mode is recommended for reliable UPnP device discovery.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ABS_URL` | Audiobookshelf server URL | Required |
-| `PUBLIC_URL` | Public URL for streaming | Required |
-| `PORT` | HTTP server port | `8080` |
-| `MEDIA_PATH` | Path to media files | `/media` |
-| `CACHE_DIR` | Cache directory | `/cache` |
-| `CONFIG_DIR` | Config directory | `/config` |
-| `LOG_LEVEL` | Log level (debug/info/warn/error) | `info` |
-| `SESSION_SECRET` | 32-byte hex secret for encryption | Auto-generated |
-| `TRANSCODE_WORKERS` | Number of transcoding workers | `2` |
+| `BRIDGE_ABS_URL` | Audiobookshelf server URL | Required |
+| `BRIDGE_PUBLIC_URL` | Public URL for streaming | Required |
+| `BRIDGE_SESSION_SECRET` | 32+ char secret for encryption | Required |
+| `BRIDGE_PORT` | HTTP server port | `8080` |
+| `BRIDGE_MEDIA_DIR` | Media directory inside container | `/media` |
+| `BRIDGE_CACHE_DIR` | Cache directory | `/cache` |
+| `BRIDGE_CONFIG_DIR` | Config directory | `/config` |
+| `BRIDGE_LOG_LEVEL` | Log level (debug/info/warn/error) | `info` |
+| `BRIDGE_TRANSCODE_WORKERS` | Number of transcoding workers | `2` |
+| `BRIDGE_ABS_MEDIA_PREFIX` | ABS media path prefix | `/audiobooks` |
+| `BRIDGE_PATH_MAPPINGS` | Additional path mappings (format: `abs:local,...`) | - |
+
+**Docker Compose Volumes** (in `.env`):
+| Variable | Description |
+|----------|-------------|
+| `MEDIA_PATH` | Host path to audiobooks |
+| `CACHE_PATH` | Host path for cache |
+| `CONFIG_PATH` | Host path for config/database |
 
 ## Version 1 Scope Boundaries
 
@@ -153,26 +161,11 @@ In scope: Playback, seek, resume, progress sync, library search/filter, single z
 
 Out of scope: Sonos app integration, multiroom grouping, chapter navigation, library management.
 
-## Production Environment (knoellp's Server)
+## Local Development
 
-**Host-Pfade:**
-- Audiobooks: `/mnt/roon-music/Audiobooks/audible` (read-only)
-- Cache: `/mnt/sonos-cache`
-
-**URLs:**
-- ABS Server: `http://192.168.1.160:13378`
-- Bridge Public URL: `http://100.89.56.20:8081`
-
-**Path Mapping:**
-- ABS verwendet `/audiobooks` als Media-Root
-- Mappt zu lokalem `/mnt/roon-music/Audiobooks`
-
-## Test Credentials
-
-**WICHTIG:** Die Test-Zugangsdaten für E2E-Tests befinden sich in `.test-credentials`. Diese Datei MUSS bei jedem Test gelesen werden!
-
-```bash
-cat .test-credentials
+For E2E testing, create a `.test-credentials` file (gitignored) with:
 ```
-
-Enthält: `TEST_USER`, `TEST_PASS`, `SONOS_DEVICE` (Büro)
+TEST_USER=your_abs_username
+TEST_PASS=your_abs_password
+SONOS_DEVICE=Your Speaker Name
+```
