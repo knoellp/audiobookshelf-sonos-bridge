@@ -20,10 +20,9 @@ COPY . .
 
 # Build the binary with version information
 # -buildvcs=false prevents "error obtaining VCS status" in Docker builds
-RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w \
-    -X 'audiobookshelf-sonos-bridge/internal/version.Version=${VERSION}' \
-    -X 'audiobookshelf-sonos-bridge/internal/version.Commit=${COMMIT}' \
-    -X 'audiobookshelf-sonos-bridge/internal/version.BuildDate=${BUILD_DATE}'" \
+# Note: Using shell form with explicit variable expansion
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false \
+    -ldflags="-s -w -X audiobookshelf-sonos-bridge/internal/version.Version=${VERSION} -X audiobookshelf-sonos-bridge/internal/version.Commit=${COMMIT} -X audiobookshelf-sonos-bridge/internal/version.BuildDate=${BUILD_DATE}" \
     -o /bridge ./cmd/bridge
 
 # Runtime stage
