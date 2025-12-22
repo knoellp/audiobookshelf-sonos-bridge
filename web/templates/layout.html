@@ -10,9 +10,9 @@
     <meta name="apple-mobile-web-app-title" content="ABS Sonos">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-    <link rel="apple-touch-icon" href="/static/audiobookshelf-bridge-WebApp-Icon.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="/static/audiobookshelf-bridge-WebApp-Icon.png">
     <title>{{if .Title}}{{.Title}} - {{end}}Audiobookshelf Sonos Bridge</title>
-    <link rel="stylesheet" href="/static/style.css?v=2">
+    <link rel="stylesheet" href="/static/style.css?v=5">
     <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
@@ -25,7 +25,7 @@
             </a>
             {{if .Username}}
             <div class="header-actions">
-                <button type="button" id="sonos-picker-toggle" class="btn btn-icon" title="Select Sonos Device" onclick="toggleSonosPicker()">
+                <button type="button" id="sonos-picker-toggle" class="btn btn-icon" title="Select Sonos Device">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
                         <circle cx="12" cy="14" r="4"></circle>
@@ -45,13 +45,14 @@
     </header>
     <!-- Sonos Device Picker Modal -->
     <div id="sonos-picker-modal" class="modal" style="display: none;">
-        <div class="modal-backdrop" onclick="toggleSonosPicker()"></div>
+        <div class="modal-backdrop" id="modal-backdrop"></div>
         <div class="modal-content">
             {{template "sonos-picker" .}}
         </div>
     </div>
     <script>
-    function toggleSonosPicker() {
+    function toggleSonosPicker(e) {
+        if (e) e.preventDefault();
         const modal = document.getElementById('sonos-picker-modal');
         modal.style.display = modal.style.display === 'none' ? 'flex' : 'none';
     }
@@ -62,16 +63,34 @@
         document.getElementById('selected-device-name').textContent = e.detail.name;
         toggleSonosPicker();
     });
-    // Restore saved device name and UUID on load
+    // Setup event listeners on load (better iOS WebApp support than onclick)
     document.addEventListener('DOMContentLoaded', function() {
+        // Sonos picker toggle button
+        const toggleBtn = document.getElementById('sonos-picker-toggle');
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', toggleSonosPicker);
+            toggleBtn.addEventListener('touchend', function(e) {
+                e.preventDefault();
+                toggleSonosPicker();
+            });
+        }
+        // Modal backdrop close
+        const backdrop = document.getElementById('modal-backdrop');
+        if (backdrop) {
+            backdrop.addEventListener('click', toggleSonosPicker);
+            backdrop.addEventListener('touchend', function(e) {
+                e.preventDefault();
+                toggleSonosPicker();
+            });
+        }
+        // Restore saved device name and UUID
         const savedName = localStorage.getItem('selectedSonosName');
         const savedUUID = localStorage.getItem('selectedSonosUUID');
         if (savedName) {
             document.getElementById('selected-device-name').textContent = savedName;
         }
-        if (savedUUID) {
-            const btn = document.getElementById('sonos-picker-toggle');
-            if (btn) btn.dataset.sonosUuid = savedUUID;
+        if (savedUUID && toggleBtn) {
+            toggleBtn.dataset.sonosUuid = savedUUID;
         }
     });
     </script>

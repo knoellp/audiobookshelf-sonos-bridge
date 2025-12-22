@@ -53,12 +53,17 @@ func (h *SonosHandler) HandleGetDevices(w http.ResponseWriter, r *http.Request) 
 	// Convert to template format
 	deviceList := make([]DeviceResponse, len(devices))
 	for i, d := range devices {
+		groupSize := d.GroupSize
+		if groupSize == 0 {
+			groupSize = 1 // Default to standalone if not set
+		}
 		deviceList[i] = DeviceResponse{
 			UUID:        d.UUID,
 			Name:        d.Name,
 			IPAddress:   d.IPAddress,
 			Model:       d.Model,
 			IsReachable: d.IsReachable,
+			GroupSize:   groupSize,
 		}
 	}
 
@@ -93,12 +98,17 @@ func (h *SonosHandler) HandleRefreshDevices(w http.ResponseWriter, r *http.Reque
 	// Convert to template format
 	deviceList := make([]DeviceResponse, len(devices))
 	for i, d := range devices {
+		groupSize := d.GroupSize
+		if groupSize == 0 {
+			groupSize = 1 // Default to standalone if not set
+		}
 		deviceList[i] = DeviceResponse{
 			UUID:        d.UUID,
 			Name:        d.Name,
 			IPAddress:   d.IPAddress,
 			Model:       d.Model,
 			IsReachable: d.IsReachable,
+			GroupSize:   groupSize,
 		}
 	}
 
@@ -119,4 +129,5 @@ type DeviceResponse struct {
 	IPAddress   string `json:"ip_address"`
 	Model       string `json:"model"`
 	IsReachable bool   `json:"is_reachable"`
+	GroupSize   int    `json:"group_size"` // Number of players in this group (>1 for grouped coordinator)
 }

@@ -47,15 +47,57 @@ func (d *Discovery) Discover(ctx context.Context, timeout time.Duration) ([]Devi
 	slog.Debug("SSDP search complete", "locations_found", len(locations))
 
 	// Fetch device descriptions
-	var devices []Device
+	var allDevices []Device
 	for _, location := range locations {
 		device, err := d.fetchDeviceDescription(ctx, location)
 		if err != nil {
 			slog.Warn("failed to fetch device description", "location", location, "error", err)
 			continue
 		}
+		allDevices = append(allDevices, *device)
+	}
 
-		// Upsert to database
+	// Get zone topology info (invisible UUIDs and group info) from ZoneGroupTopology
+	invisibleUUIDs, groupInfo := d.getZoneInfo(ctx, allDevices)
+
+	// Process all devices - mark some as hidden (stereo pair slaves, non-coordinator group members)
+	var devices []Device
+	var invisibleFiltered, groupMembersFiltered int
+
+	for _, device := range allDevices {
+		// Normalize UUID for comparison (remove "uuid:" prefix)
+		normalizedUUID := NormalizeUUID(device.UUID)
+
+		// Determine if this device should be hidden
+		isHidden := false
+		groupSize := 1
+
+		// Check if invisible (stereo pair slave)
+		if invisibleUUIDs[normalizedUUID] {
+			slog.Debug("marking invisible device as hidden (stereo pair slave)",
+				"name", device.Name,
+				"uuid", device.UUID,
+				"model", device.Model)
+			isHidden = true
+			invisibleFiltered++
+		}
+
+		// Check group membership
+		info, hasInfo := groupInfo[normalizedUUID]
+		if hasInfo {
+			groupSize = info.GroupSize
+			if info.GroupSize > 1 && !info.IsCoordinator {
+				// This device is a non-coordinator member of a group - hide it
+				slog.Debug("marking non-coordinator group member as hidden",
+					"name", device.Name,
+					"uuid", device.UUID,
+					"group_size", info.GroupSize)
+				isHidden = true
+				groupMembersFiltered++
+			}
+		}
+
+		// Upsert to database with hidden flag and group size
 		storeDevice := &store.SonosDevice{
 			UUID:         device.UUID,
 			Name:         device.Name,
@@ -63,6 +105,8 @@ func (d *Discovery) Discover(ctx context.Context, timeout time.Duration) ([]Devi
 			LocationURL:  device.LocationURL,
 			Model:        device.Model,
 			IsReachable:  true,
+			IsHidden:     isHidden,
+			GroupSize:    groupSize,
 			DiscoveredAt: time.Now(),
 			LastSeenAt:   time.Now(),
 		}
@@ -78,11 +122,53 @@ func (d *Discovery) Discover(ctx context.Context, timeout time.Duration) ([]Devi
 			continue
 		}
 
-		devices = append(devices, *device)
-		slog.Info("discovered Sonos device", "name", device.Name, "model", device.Model, "ip", device.IPAddress)
+		// Only add visible devices to the returned list
+		if !isHidden {
+			device.GroupSize = groupSize
+			devices = append(devices, device)
+			if device.GroupSize > 1 {
+				slog.Info("discovered Sonos device (group coordinator)",
+					"name", device.Name, "model", device.Model, "ip", device.IPAddress, "group_size", device.GroupSize)
+			} else {
+				slog.Info("discovered Sonos device", "name", device.Name, "model", device.Model, "ip", device.IPAddress)
+			}
+		}
 	}
 
+	slog.Info("Sonos discovery complete",
+		"total_found", len(allDevices),
+		"visible_devices", len(devices),
+		"invisible_filtered", invisibleFiltered,
+		"group_members_filtered", groupMembersFiltered)
+
 	return devices, nil
+}
+
+// getZoneInfo retrieves invisible UUIDs and group info from ZoneGroupTopology.
+func (d *Discovery) getZoneInfo(ctx context.Context, devices []Device) (invisibleUUIDs map[string]bool, groupInfo map[string]GroupInfo) {
+	invisibleUUIDs = make(map[string]bool)
+	groupInfo = make(map[string]GroupInfo)
+
+	if len(devices) == 0 {
+		return
+	}
+
+	// Use the first discovered device to query ZoneGroupTopology
+	// All Sonos devices share the same topology information
+	device := devices[0]
+	topology := NewZoneGroupTopology(device.IPAddress)
+
+	state, err := topology.GetZoneGroupState(ctx)
+	if err != nil {
+		slog.Warn("failed to get zone group state, skipping topology filtering",
+			"device", device.Name,
+			"error", err)
+		return
+	}
+
+	invisibleUUIDs = state.GetInvisibleUUIDs()
+	groupInfo = state.GetGroupInfo()
+	return
 }
 
 // ssdpSearch performs an SSDP M-SEARCH and returns discovered device locations.

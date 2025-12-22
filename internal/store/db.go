@@ -158,6 +158,40 @@ func (db *DB) runIncrementalMigrations() error {
 		}
 	}
 
+	// Add is_hidden column to sonos_devices if not exists
+	// Used to hide stereo pair slaves and non-coordinator group members without deleting them
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('sonos_devices') WHERE name = 'is_hidden'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check is_hidden column: %w", err)
+	}
+
+	if count == 0 {
+		slog.Info("migrating sonos_devices: adding is_hidden column")
+		_, err := db.conn.Exec(`ALTER TABLE sonos_devices ADD COLUMN is_hidden INTEGER DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("failed to add is_hidden column: %w", err)
+		}
+	}
+
+	// Add group_size column to sonos_devices if not exists
+	// Stores the number of players in this device's group (1 = standalone, >1 = group coordinator)
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('sonos_devices') WHERE name = 'group_size'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check group_size column: %w", err)
+	}
+
+	if count == 0 {
+		slog.Info("migrating sonos_devices: adding group_size column")
+		_, err := db.conn.Exec(`ALTER TABLE sonos_devices ADD COLUMN group_size INTEGER DEFAULT 1`)
+		if err != nil {
+			return fmt.Errorf("failed to add group_size column: %w", err)
+		}
+	}
+
 	return nil
 }
 

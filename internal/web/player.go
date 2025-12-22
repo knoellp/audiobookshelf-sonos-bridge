@@ -1023,6 +1023,7 @@ func (h *PlayerHandler) renderPlayerPage(w http.ResponseWriter, name string, dat
 			return float64(position) / float64(duration) * 100
 		},
 		"plus1": func(i int) int { return i + 1 },
+		"minus": func(a, b int) int { return a - b },
 		"json": func(v interface{}) template.JS {
 			b, err := json.Marshal(v)
 			if err != nil {

@@ -262,3 +262,83 @@ func SegmentToGlobal(segmentIndex, localPosSec int) int {
 1. **SetNextAVTransportURI**: Sonos unterstützt Queue für gapless playback - ZP90 testen
 2. **Cache-Invalidierung**: Einzelne Segmente neu erstellen bei Beschädigung?
 3. **Rückwärts-Kompatibilität**: Alte Cache-Einträge (einzelne Dateien) migrieren?
+
+---
+
+## Issue 9: Sonos Stereo Pair Filtering - COMPLETED
+
+### Problem
+Stereo pairs show as duplicate entries in the Sonos device picker. This happens because SSDP discovery finds all physical speakers individually, including stereo pair slaves.
+
+### Solution
+Use Sonos ZoneGroupTopology service to identify and filter invisible players (stereo pair slaves).
+
+### Technical Details
+
+#### ZoneGroupState XML Structure
+```xml
+<ZoneGroupState>
+  <ZoneGroups>
+    <ZoneGroup Coordinator="RINCON_XXX">
+      <ZoneGroupMember UUID="RINCON_XXX" ZoneName="Living Room" Invisible="0"/>
+      <ZoneGroupMember UUID="RINCON_YYY" ZoneName="Living Room" Invisible="1"/>
+    </ZoneGroup>
+  </ZoneGroups>
+</ZoneGroupState>
+```
+
+#### Key Attributes
+- `Invisible="1"`: Stereo pair slave (should be filtered)
+- `Invisible="0"` or missing: Visible player (should be shown)
+- `Coordinator`: UUID of group coordinator
+
+### Implementation Tasks
+
+- [x] **T9.1** Add ZoneGroupTopology types to `internal/sonos/types.go`
+- [x] **T9.2** Implement GetZoneGroupState in `internal/sonos/zonegroupstate.go`
+- [x] **T9.3** Parse ZoneGroupState XML to extract visibility info
+- [x] **T9.4** Modify discovery.go to filter invisible players
+- [x] **T9.5** Test with Playwright in headed mode
+
+### Test Results (2025-12-21)
+- Discovery found 10 devices total
+- 1 invisible player (stereo pair slave) filtered: `RINCON_949F3E048C9601400` (Schlafzimmer)
+- 9 visible devices shown in the picker
+- Schlafzimmer stereo pair now shows as single entry
+
+### Files to Modify/Create
+1. `internal/sonos/types.go` - Add XML structs
+2. `internal/sonos/zonegroupstate.go` - New file for ZoneGroupTopology
+3. `internal/sonos/discovery.go` - Integrate filtering
+
+---
+
+## Issue 10: Item-Detail zeigt falsche Dauer - COMPLETED
+
+### Problem
+Auf der Item-Detail-Seite wird "< 1 min" angezeigt, obwohl das Buch (z.B. "Herzfluch" von Andreas Gruber) über 16 Stunden lang ist.
+
+### Ursache
+In `library.go:343` wird `item.Media.Duration` direkt verwendet ohne Fallback auf AudioFiles.
+
+### Lösung
+1. Duration-Berechnung mit Fallback auf AudioFiles-Summe wenn Media.Duration = 0
+2. Neue Felder `ProgressPct` und `RemainingMin` in DetailedItem struct
+3. Template zeigt bei Fortschritt: "16h 48m · 45% · 9h 2m verbleibend"
+
+### Tasks
+
+- [x] **T10.1** Analysieren: Ursache für falsche Duration gefunden
+- [x] **T10.2** Fix: Duration-Berechnung in `library.go` korrigieren (Fallback auf AudioFiles)
+- [x] **T10.3** Enhancement: Verbleibende Zeit berechnen und anzeigen
+- [x] **T10.4** Template anpassen: Neue Zeitanzeige implementieren
+- [x] **T10.5** Test: Manuell prüfen mit "Herzfluch" - zeigt jetzt "16 hr 48 min" korrekt
+
+### Test Results (2025-12-21)
+- "Herzfluch" zeigt jetzt korrekt "16 hr 48 min" statt "< 1 min"
+- Verbleibende Zeit wird nur bei Fortschritt > 0% angezeigt
+- Cache-Status weiterhin korrekt ("Ready to play" / "Not cached")
+
+### Geänderte Dateien
+- `internal/web/library.go` - Duration-Berechnung und DetailedItem mit RemainingMin/ProgressPct
+- `web/templates/item.html` - Anzeige der Zeitinformationen mit verbleibender Zeit

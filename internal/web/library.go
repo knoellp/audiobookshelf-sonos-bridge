@@ -332,16 +332,34 @@ func (h *LibraryHandler) HandleItem(w http.ResponseWriter, r *http.Request) {
 		progressPercent = progress.Progress
 	}
 
+	// Calculate total duration (fallback to AudioFiles sum if Media.Duration is 0)
+	totalDuration := item.Media.Duration
+	if totalDuration == 0 && len(item.Media.AudioFiles) > 0 {
+		for _, af := range item.Media.AudioFiles {
+			totalDuration += af.Duration
+		}
+	}
+
+	// Calculate remaining time
+	progressPct := int(progressPercent * 100)
+	remainingMin := 0
+	if totalDuration > 0 {
+		remainingSec := totalDuration * (1.0 - progressPercent)
+		remainingMin = int(remainingSec / 60)
+	}
+
 	// Build simplified item with description
 	simplifiedItem := DetailedItem{
-		ID:          item.ID,
-		LibraryID:   item.LibraryID,
-		Title:       item.Media.Metadata.Title,
-		Author:      getAuthorName(item),
-		Description: item.Media.Metadata.Description,
-		CoverURL:    fmt.Sprintf("/cover/%s", item.ID),
-		DurationSec: int(item.Media.Duration),
-		Progress:    progressPercent,
+		ID:           item.ID,
+		LibraryID:    item.LibraryID,
+		Title:        item.Media.Metadata.Title,
+		Author:       getAuthorName(item),
+		Description:  item.Media.Metadata.Description,
+		CoverURL:     fmt.Sprintf("/cover/%s", item.ID),
+		DurationSec:  int(totalDuration),
+		Progress:     progressPercent,
+		ProgressPct:  progressPct,
+		RemainingMin: remainingMin,
 	}
 
 	data := map[string]interface{}{
@@ -357,14 +375,16 @@ func (h *LibraryHandler) HandleItem(w http.ResponseWriter, r *http.Request) {
 
 // DetailedItem is an item with full details for the detail page.
 type DetailedItem struct {
-	ID          string
-	LibraryID   string
-	Title       string
-	Author      string
-	Description string
-	CoverURL    string
-	DurationSec int
-	Progress    float64
+	ID           string
+	LibraryID    string
+	Title        string
+	Author       string
+	Description  string
+	CoverURL     string
+	DurationSec  int
+	Progress     float64
+	ProgressPct  int // Progress as percentage (0-100)
+	RemainingMin int // Remaining minutes to listen
 }
 
 func getAuthorName(item *abs.LibraryItem) string {
@@ -426,6 +446,7 @@ func (h *LibraryHandler) render(w http.ResponseWriter, name string, data interfa
 			return float64(position) / float64(duration) * 100
 		},
 		"plus1": func(i int) int { return i + 1 },
+		"minus": func(a, b int) int { return a - b },
 		"json": func(v interface{}) template.JS {
 			b, err := json.Marshal(v)
 			if err != nil {
