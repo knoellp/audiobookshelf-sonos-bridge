@@ -4,8 +4,8 @@
 *.dll
 *.so
 *.dylib
-bridge
-abs-sonos-bridge
+/bridge
+/abs-sonos-bridge
 *.out
 
 # Local run scripts (use Docker!)

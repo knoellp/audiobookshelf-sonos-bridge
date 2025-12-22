@@ -18,15 +18,10 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Debug: Show what we have
-RUN echo "=== Files in /app ===" && ls -la && \
-    echo "=== Go files count ===" && find . -name "*.go" | wc -l && \
-    echo "=== cmd/bridge contents ===" && ls -la cmd/bridge/ && \
-    echo "=== ARG values ===" && echo "VERSION=${VERSION} COMMIT=${COMMIT} BUILD_DATE=${BUILD_DATE}" && \
-    echo "=== Try go build verbose ===" && \
-    CGO_ENABLED=0 GOOS=linux go build -v -buildvcs=false \
+# Build the binary with version information
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false \
     -ldflags="-s -w -X audiobookshelf-sonos-bridge/internal/version.Version=${VERSION} -X audiobookshelf-sonos-bridge/internal/version.Commit=${COMMIT} -X audiobookshelf-sonos-bridge/internal/version.BuildDate=${BUILD_DATE}" \
-    -o /bridge ./cmd/bridge 2>&1 || (echo "=== BUILD FAILED ===" && exit 1)
+    -o /bridge ./cmd/bridge
 
 # Runtime stage
 FROM alpine:3.19
