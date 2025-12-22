@@ -60,21 +60,21 @@ jobs:
           echo "commit=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
-      - name: Debug - List files
+      - name: Debug - Test regular docker build first
         run: |
-          echo "=== Go files ==="
-          find . -name "*.go" | head -50
-          echo "=== go.mod ==="
-          cat go.mod
-          echo "=== Check build locally ==="
-          go build -buildvcs=false ./... || echo "Local build check done"
+          echo "=== Testing regular docker build (not buildx) ==="
+          docker build \
+            --build-arg VERSION=${{ steps.prep.outputs.version }} \
+            --build-arg COMMIT=${{ steps.prep.outputs.commit }} \
+            --build-arg BUILD_DATE=${{ steps.prep.outputs.build_date }} \
+            -t test-build .
+          echo "=== Regular docker build succeeded ==="
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          # Temporarily amd64 only to debug build failure
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
