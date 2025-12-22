@@ -27,60 +27,76 @@ Play audiobooks from [Audiobookshelf](https://www.audiobookshelf.org/) on your S
 docker run -d \
   --name abs-sonos-bridge \
   --network host \
-  -e ABS_URL=http://your-audiobookshelf-server:13378 \
-  -e PUBLIC_URL=http://your-host-ip:8080 \
+  -e BRIDGE_ABS_URL=http://your-audiobookshelf-server:13378 \
+  -e BRIDGE_PUBLIC_URL=http://your-host-ip:8080 \
+  -e BRIDGE_SESSION_SECRET=$(openssl rand -hex 32) \
   -v /path/to/media:/media:ro \
   -v /path/to/cache:/cache \
   -v /path/to/config:/config \
-  ghcr.io/your-username/abs-sonos-bridge:latest
+  ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest
 ```
 
 ### Using Docker Compose
 
-```yaml
-version: '3.8'
-services:
-  abs-sonos-bridge:
-    image: ghcr.io/your-username/abs-sonos-bridge:latest
-    network_mode: host
-    environment:
-      - ABS_URL=http://your-audiobookshelf-server:13378
-      - PUBLIC_URL=http://your-host-ip:8080
-      - LOG_LEVEL=info
-    volumes:
-      - /path/to/media:/media:ro
-      - ./cache:/cache
-      - ./config:/config
-    restart: unless-stopped
+1. Clone the repository and copy the example config:
+```bash
+git clone https://github.com/knoellp/audiobookshelf-sonos-bridge.git
+cd audiobookshelf-sonos-bridge
+cp .env.example .env
+```
+
+2. Edit `.env` with your settings:
+```bash
+BRIDGE_ABS_URL=http://your-audiobookshelf-server:13378
+BRIDGE_PUBLIC_URL=http://your-host-ip:8080
+BRIDGE_SESSION_SECRET=your-secret-min-32-chars
+MEDIA_PATH=/path/to/your/audiobooks
+```
+
+3. Start the service:
+```bash
+docker compose up -d
 ```
 
 ### Building from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/abs-sonos-bridge.git
-cd abs-sonos-bridge
+git clone https://github.com/knoellp/audiobookshelf-sonos-bridge.git
+cd audiobookshelf-sonos-bridge
 
-# Build
+# Build (requires Go 1.22+ and ffmpeg)
 go build -o bridge ./cmd/bridge
 
 # Run
-ABS_URL=http://localhost:13378 PUBLIC_URL=http://localhost:8080 ./bridge
+BRIDGE_ABS_URL=http://localhost:13378 \
+BRIDGE_PUBLIC_URL=http://localhost:8080 \
+BRIDGE_SESSION_SECRET=dev-secret-at-least-32-characters \
+./bridge
 ```
 
 ## Configuration
 
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
-| `ABS_URL` | Audiobookshelf server URL | **Required** |
-| `PUBLIC_URL` | Public URL for this service (must be accessible from Sonos) | **Required** |
-| `PORT` | HTTP server port | `8080` |
-| `MEDIA_PATH` | Path to media files (same as Audiobookshelf) | `/media` |
-| `CACHE_DIR` | Directory for transcoded audio cache | `/cache` |
-| `CONFIG_DIR` | Directory for configuration and database | `/config` |
-| `LOG_LEVEL` | Logging level: debug, info, warn, error | `info` |
-| `SESSION_SECRET` | 32-byte hex secret for session encryption | Auto-generated |
-| `TRANSCODE_WORKERS` | Number of concurrent transcoding workers | `2` |
+| `BRIDGE_ABS_URL` | Audiobookshelf server URL | **Required** |
+| `BRIDGE_PUBLIC_URL` | Public URL for this service (must be accessible from Sonos) | **Required** |
+| `BRIDGE_SESSION_SECRET` | Secret for session encryption (min 32 chars) | **Required** |
+| `BRIDGE_PORT` | HTTP server port | `8080` |
+| `BRIDGE_MEDIA_DIR` | Path to media files inside container | `/media` |
+| `BRIDGE_CACHE_DIR` | Directory for transcoded audio cache | `/cache` |
+| `BRIDGE_CONFIG_DIR` | Directory for configuration and database | `/config` |
+| `BRIDGE_LOG_LEVEL` | Logging level: debug, info, warn, error | `info` |
+| `BRIDGE_TRANSCODE_WORKERS` | Number of concurrent transcoding workers | `2` |
+| `BRIDGE_ABS_MEDIA_PREFIX` | Path prefix ABS uses for media files | `/audiobooks` |
+
+**Docker Compose volume paths** (in `.env` file):
+
+| Variable | Description |
+|----------|-------------|
+| `MEDIA_PATH` | Host path to your audiobooks directory |
+| `CACHE_PATH` | Host path for transcoded audio cache |
+| `CONFIG_PATH` | Host path for configuration and database |
 
 ## Usage
 
@@ -101,7 +117,7 @@ This service uses UPnP (SSDP) to discover Sonos devices on your local network. F
 ## How It Works
 
 1. **Authentication**: Uses your Audiobookshelf credentials for library access
-2. **Transcoding**: Converts audio files to MP3 128kbps (Sonos-compatible)
+2. **Transcoding**: Remuxes or transcodes audio to Sonos-compatible formats (AAC/MP3/FLAC)
 3. **Streaming**: Generates secure, time-limited URLs for Sonos playback
 4. **Progress Sync**: Periodically updates your progress in Audiobookshelf
 
