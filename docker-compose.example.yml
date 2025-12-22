@@ -1,0 +1,63 @@
+# Audiobookshelf Sonos Bridge
+#
+# Kopiere diese Datei nach docker-compose.yml und passe die Werte an.
+# Dokumentation: https://github.com/knoellp/audiobookshelf-sonos-bridge
+#
+# Starten: docker compose up -d
+# Logs:    docker compose logs -f
+# Stoppen: docker compose down
+
+services:
+  audiobookshelf-sonos-bridge:
+    image: ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest
+    container_name: abs-sonos-bridge
+
+    # Host-Netzwerk ist ERFORDERLICH für Sonos UPnP Discovery!
+    # Ohne host-Modus werden keine Sonos-Geräte gefunden.
+    network_mode: host
+
+    volumes:
+      # Audiobooks - MUSS der gleiche Pfad sein wie in Audiobookshelf!
+      # Beispiel: Wenn ABS /audiobooks verwendet, muss hier auch /audiobooks stehen
+      - /pfad/zu/deinen/audiobooks:/media:ro
+
+      # Cache für transkodierte Audio-Dateien
+      # Kann bei Problemen gelöscht werden
+      - ./cache:/cache
+
+      # Konfiguration und SQLite-Datenbank
+      - ./config:/config
+
+    environment:
+      # ══════════════════════════════════════════════════════════
+      # ERFORDERLICH - Diese MÜSSEN angepasst werden!
+      # ══════════════════════════════════════════════════════════
+
+      # URL deines Audiobookshelf-Servers
+      - BRIDGE_ABS_URL=http://localhost:13378
+
+      # Öffentliche URL dieses Servers (muss von Sonos erreichbar sein!)
+      # Verwende die IP-Adresse deines Servers, NICHT localhost
+      - BRIDGE_PUBLIC_URL=http://192.168.1.100:8080
+
+      # Geheimer Schlüssel für Session-Verschlüsselung
+      # Generiere einen mit: openssl rand -hex 32
+      - BRIDGE_SESSION_SECRET=HIER-MINDESTENS-32-ZEICHEN-EINFUEGEN
+
+      # ══════════════════════════════════════════════════════════
+      # OPTIONAL - Standardwerte funktionieren meistens
+      # ══════════════════════════════════════════════════════════
+
+      # Zeitzone
+      - TZ=Europe/Berlin
+
+      # Log-Level: debug, info, warn, error
+      #- BRIDGE_LOG_LEVEL=info
+
+      # Anzahl paralleler Transcoding-Prozesse
+      #- BRIDGE_TRANSCODE_WORKERS=2
+
+      # Pfad-Prefix für Mediendateien in ABS (Standard: /audiobooks)
+      #- BRIDGE_ABS_MEDIA_PREFIX=/audiobooks
+
+    restart: unless-stopped

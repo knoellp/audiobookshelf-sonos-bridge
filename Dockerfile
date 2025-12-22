@@ -1,6 +1,11 @@
 # Build stage
 FROM golang:1.22-alpine AS build
 
+# Build arguments for versioning
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
 WORKDIR /app
 
 # Install build dependencies
@@ -13,11 +18,28 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bridge ./cmd/bridge
+# Build the binary with version information
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false \
+    -ldflags="-s -w -X audiobookshelf-sonos-bridge/internal/version.Version=${VERSION} -X audiobookshelf-sonos-bridge/internal/version.Commit=${COMMIT} -X audiobookshelf-sonos-bridge/internal/version.BuildDate=${BUILD_DATE}" \
+    -o /bridge ./cmd/bridge
 
 # Runtime stage
 FROM alpine:3.19
+
+# Build arguments for labels (must be redeclared after FROM)
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+# OCI Image Labels
+LABEL org.opencontainers.image.title="Audiobookshelf Sonos Bridge"
+LABEL org.opencontainers.image.description="Stream audiobooks from Audiobookshelf to Sonos speakers"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.revision="${COMMIT}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL org.opencontainers.image.source="https://github.com/knoellp/audiobookshelf-sonos-bridge"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.vendor="knoellp"
 
 # Install runtime dependencies
 RUN apk add --no-cache \
