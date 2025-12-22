@@ -126,6 +126,8 @@ func parseZoneGroupState(response string) (*ZoneGroupState, error) {
 				UUID:      m.UUID,
 				ZoneName:  m.ZoneName,
 				Invisible: m.Invisible == "1",
+				Location:  m.Location,
+				IPAddress: extractIPFromLocation(m.Location),
 			}
 			group.Members = append(group.Members, member)
 		}
@@ -243,4 +245,88 @@ func min(a, b int) int {
 // NormalizeUUID normalizes a Sonos UUID by stripping the "uuid:" prefix if present.
 func NormalizeUUID(uuid string) string {
 	return strings.TrimPrefix(uuid, "uuid:")
+}
+
+// extractIPFromLocation extracts the IP address from a Sonos Location URL.
+// e.g., "http://192.168.1.40:1400/xml/device_description.xml" -> "192.168.1.40"
+func extractIPFromLocation(location string) string {
+	if location == "" {
+		return ""
+	}
+	// Remove "http://" or "https://" prefix
+	location = strings.TrimPrefix(location, "http://")
+	location = strings.TrimPrefix(location, "https://")
+	// Extract host:port part
+	idx := strings.Index(location, "/")
+	if idx > 0 {
+		location = location[:idx]
+	}
+	// Remove port
+	host, _, err := net.SplitHostPort(location)
+	if err != nil {
+		// May not have a port, just return as-is
+		return location
+	}
+	return host
+}
+
+// GetCoordinatorInfo returns the coordinator information for the device at the given IP.
+// It queries the ZoneGroupTopology and finds which group this device belongs to,
+// then returns the coordinator's IP address.
+func (z *ZoneGroupTopology) GetCoordinatorInfo(ctx context.Context) (*CoordinatorInfo, error) {
+	state, err := z.GetZoneGroupState(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get zone group state: %w", err)
+	}
+
+	// Find which group this device belongs to by checking if we can find
+	// any member with an IP matching our query device
+	// Since we're querying a specific device, that device must be in one of the groups
+	for _, group := range state.ZoneGroups {
+		// Find the coordinator in this group
+		var coordinatorMember *ZoneGroupMember
+		var visibleCount int
+
+		for i := range group.Members {
+			member := &group.Members[i]
+			if !member.Invisible {
+				visibleCount++
+			}
+			if member.UUID == group.Coordinator {
+				coordinatorMember = member
+			}
+		}
+
+		// Check if the queried device is in this group
+		for _, member := range group.Members {
+			if member.IPAddress == z.deviceIP {
+				if coordinatorMember == nil {
+					return nil, fmt.Errorf("coordinator not found in group")
+				}
+
+				info := &CoordinatorInfo{
+					CoordinatorUUID: group.Coordinator,
+					CoordinatorIP:   coordinatorMember.IPAddress,
+					GroupSize:       visibleCount,
+					IsCoordinator:   member.UUID == group.Coordinator,
+				}
+
+				slog.Debug("found coordinator info",
+					"device_ip", z.deviceIP,
+					"coordinator_ip", info.CoordinatorIP,
+					"coordinator_uuid", info.CoordinatorUUID,
+					"group_size", info.GroupSize,
+					"is_coordinator", info.IsCoordinator)
+
+				return info, nil
+			}
+		}
+	}
+
+	// Device not found in any group - it's standalone, return itself as coordinator
+	return &CoordinatorInfo{
+		CoordinatorIP: z.deviceIP,
+		GroupSize:     1,
+		IsCoordinator: true,
+	}, nil
 }

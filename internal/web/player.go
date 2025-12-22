@@ -62,6 +62,28 @@ func NewPlayerHandler(
 	}
 }
 
+// getCoordinatorIP returns the IP address of the group coordinator for the given device.
+// If the device is standalone or an error occurs, returns the original device IP.
+// This ensures that all AVTransport commands go to the coordinator, which controls the entire group.
+func (h *PlayerHandler) getCoordinatorIP(ctx context.Context, deviceIP string) string {
+	zgt := sonos.NewZoneGroupTopology(deviceIP)
+	info, err := zgt.GetCoordinatorInfo(ctx)
+	if err != nil {
+		slog.Debug("could not get coordinator info, using device IP",
+			"device_ip", deviceIP,
+			"error", err)
+		return deviceIP
+	}
+	if info.CoordinatorIP != "" && info.CoordinatorIP != deviceIP {
+		slog.Debug("routing to group coordinator",
+			"device_ip", deviceIP,
+			"coordinator_ip", info.CoordinatorIP,
+			"group_size", info.GroupSize)
+		return info.CoordinatorIP
+	}
+	return deviceIP
+}
+
 // HandlePlay handles POST /play requests to start playback on Sonos.
 func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -243,8 +265,11 @@ func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create AVTransport client using device IP
-	avt := sonos.NewAVTransport(device.IPAddress)
+	// Get coordinator IP for group support (sends commands to coordinator instead of member)
+	targetIP := h.getCoordinatorIP(ctx, device.IPAddress)
+
+	// Create AVTransport client using coordinator IP
+	avt := sonos.NewAVTransport(targetIP)
 
 	// Build DIDL-Lite metadata with correct MIME type
 	mimeType := cache.GetContentType(cacheEntry.CacheFormat)
@@ -361,7 +386,10 @@ func (h *PlayerHandler) HandlePause(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	avt := sonos.NewAVTransport(device.IPAddress)
+
+	// Get coordinator IP for group support
+	targetIP := h.getCoordinatorIP(ctx, device.IPAddress)
+	avt := sonos.NewAVTransport(targetIP)
 
 	// Get current position BEFORE pausing (most accurate)
 	posInfo, _ := avt.GetPositionInfo(ctx)
@@ -458,14 +486,15 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 			"position_sec", playback.PositionSec,
 		)
 
-		// Stop on old device first
+		// Stop on old device first (use coordinator for proper group handling)
 		oldDevice, err := h.sonosStore.Get(playback.SonosUUID)
 		if err == nil && oldDevice != nil {
-			oldAVT := sonos.NewAVTransport(oldDevice.IPAddress)
+			oldCoordinatorIP := h.getCoordinatorIP(ctx, oldDevice.IPAddress)
+			oldAVT := sonos.NewAVTransport(oldCoordinatorIP)
 			if err := oldAVT.Stop(ctx); err != nil {
 				slog.Debug("failed to stop old device (may already be stopped)", "error", err)
 			} else {
-				slog.Debug("stopped old device", "device", oldDevice.Name)
+				slog.Debug("stopped old device", "device", oldDevice.Name, "coordinator_ip", oldCoordinatorIP)
 			}
 		} else {
 			slog.Warn("old device not found", "uuid", playback.SonosUUID, "error", err)
@@ -549,9 +578,12 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 		mimeType := cache.GetContentType(cacheEntry.CacheFormat)
 		metadata := buildDIDLMetadata(item, streamURL, mimeType)
 
-		// Set URI on new device
-		newAVT := sonos.NewAVTransport(newDevice.IPAddress)
-		slog.Debug("setting transport URI on new device", "url", streamURL)
+		// Get coordinator IP for new device (for group support)
+		newCoordinatorIP := h.getCoordinatorIP(ctx, newDevice.IPAddress)
+
+		// Set URI on new device (via coordinator)
+		newAVT := sonos.NewAVTransport(newCoordinatorIP)
+		slog.Debug("setting transport URI on new device", "url", streamURL, "coordinator_ip", newCoordinatorIP)
 		if err := newAVT.SetAVTransportURI(ctx, streamURL, metadata); err != nil {
 			slog.Error("failed to set transport URI on new device", "device", newDevice.Name, "error", err)
 			http.Error(w, "failed to set URI on new Sonos", http.StatusInternalServerError)
@@ -600,7 +632,9 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	avt := sonos.NewAVTransport(device.IPAddress)
+	// Get coordinator IP for group support
+	targetIP := h.getCoordinatorIP(ctx, device.IPAddress)
+	avt := sonos.NewAVTransport(targetIP)
 
 	// Fetch latest progress from ABS (single source of truth)
 	var absPositionSec int
@@ -711,8 +745,11 @@ func (h *PlayerHandler) HandleSeek(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	avt := sonos.NewAVTransport(device.IPAddress)
 	ctx := r.Context()
+
+	// Get coordinator IP for group support
+	targetIP := h.getCoordinatorIP(ctx, device.IPAddress)
+	avt := sonos.NewAVTransport(targetIP)
 
 	var targetGlobalPositionSec int
 
@@ -882,7 +919,9 @@ func (h *PlayerHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	avt := sonos.NewAVTransport(device.IPAddress)
+	// Get coordinator IP for group support
+	targetIP := h.getCoordinatorIP(r.Context(), device.IPAddress)
+	avt := sonos.NewAVTransport(targetIP)
 
 	// Get current transport state from Sonos
 	transportInfo, err := avt.GetTransportInfo(r.Context())
@@ -1018,8 +1057,11 @@ func (h *PlayerHandler) handleSegmentTransition(ctx context.Context, playback *s
 		}
 	}
 
-	// Set next segment on Sonos
-	avt := sonos.NewAVTransport(device.IPAddress)
+	// Get coordinator IP for group support
+	targetIP := h.getCoordinatorIP(ctx, device.IPAddress)
+
+	// Set next segment on Sonos (via coordinator)
+	avt := sonos.NewAVTransport(targetIP)
 	if err := avt.SetAVTransportURI(ctx, nextStreamURL, metadata); err != nil {
 		slog.Error("failed to set next segment URI", "error", err)
 		return
@@ -1222,7 +1264,9 @@ func (h *PlayerHandler) HandleStop(w http.ResponseWriter, r *http.Request) {
 
 	var avt *sonos.AVTransport
 	if device != nil {
-		avt = sonos.NewAVTransport(device.IPAddress)
+		// Get coordinator IP for group support
+		targetIP := h.getCoordinatorIP(ctx, device.IPAddress)
+		avt = sonos.NewAVTransport(targetIP)
 
 		// Get current position before stopping
 		posInfo, _ := avt.GetPositionInfo(ctx)
@@ -1249,7 +1293,9 @@ func (h *PlayerHandler) HandleStop(w http.ResponseWriter, r *http.Request) {
 	if currentSelectedUUID != "" && currentSelectedUUID != playback.SonosUUID {
 		selectedDevice, err := h.sonosStore.Get(currentSelectedUUID)
 		if err == nil && selectedDevice != nil {
-			selectedAVT := sonos.NewAVTransport(selectedDevice.IPAddress)
+			// Use coordinator IP for the selected device too
+			selectedCoordinatorIP := h.getCoordinatorIP(ctx, selectedDevice.IPAddress)
+			selectedAVT := sonos.NewAVTransport(selectedCoordinatorIP)
 			if err := selectedAVT.Stop(ctx); err != nil {
 				if strings.Contains(err.Error(), "errorCode>701") {
 					slog.Debug("stop not needed on selected device - already stopped", "device", selectedDevice.Name)
@@ -1257,7 +1303,7 @@ func (h *PlayerHandler) HandleStop(w http.ResponseWriter, r *http.Request) {
 					slog.Debug("failed to stop on selected device", "device", selectedDevice.Name, "error", err)
 				}
 			} else {
-				slog.Debug("stopped playback on selected device", "device", selectedDevice.Name)
+				slog.Debug("stopped playback on selected device", "device", selectedDevice.Name, "coordinator_ip", selectedCoordinatorIP)
 			}
 		}
 	}
@@ -1459,6 +1505,661 @@ func (h *PlayerHandler) HandleToggleMute(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]bool{
 		"muted": !currentMute,
 	})
+}
+
+// HandleGetGroupVolume handles GET /volume/group requests.
+// Returns the group volume if the current device is in a group.
+func (h *PlayerHandler) HandleGetGroupVolume(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get current playback session
+	playback, err := h.playbackStore.GetBySessionID(session.ID)
+	if err != nil || playback == nil {
+		http.Error(w, "no active playback", http.StatusNotFound)
+		return
+	}
+
+	// Get Sonos device
+	device, err := h.sonosStore.Get(playback.SonosUUID)
+	if err != nil || device == nil {
+		http.Error(w, "device not found", http.StatusNotFound)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Get coordinator info to check if this is a group
+	zgt := sonos.NewZoneGroupTopology(device.IPAddress)
+	coordInfo, err := zgt.GetCoordinatorInfo(ctx)
+	if err != nil {
+		slog.Warn("failed to get coordinator info", "error", err)
+		// Fallback to single device volume
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"is_group": false,
+		})
+		return
+	}
+
+	// Only use group volume if there are multiple members
+	if coordInfo.GroupSize <= 1 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"is_group": false,
+		})
+		return
+	}
+
+	// Get group volume from coordinator
+	grc := sonos.NewGroupRenderingControl(coordInfo.CoordinatorIP)
+	volume, err := grc.GetGroupVolume(ctx)
+	if err != nil {
+		slog.Warn("failed to get group volume", "error", err)
+		http.Error(w, "failed to get group volume", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"is_group":   true,
+		"volume":     volume,
+		"group_size": coordInfo.GroupSize,
+	})
+}
+
+// HandleSetGroupVolume handles POST /volume/group requests.
+// Sets the group volume if the current device is in a group.
+func (h *PlayerHandler) HandleSetGroupVolume(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	volumeStr := r.FormValue("volume")
+	if volumeStr == "" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	volume, err := strconv.Atoi(volumeStr)
+	if err != nil {
+		http.Error(w, "invalid volume", http.StatusBadRequest)
+		return
+	}
+
+	// Get current playback session
+	playback, err := h.playbackStore.GetBySessionID(session.ID)
+	if err != nil || playback == nil {
+		http.Error(w, "no active playback", http.StatusNotFound)
+		return
+	}
+
+	// Get Sonos device
+	device, err := h.sonosStore.Get(playback.SonosUUID)
+	if err != nil || device == nil {
+		http.Error(w, "device not found", http.StatusNotFound)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Get coordinator IP
+	coordinatorIP := h.getCoordinatorIP(ctx, device.IPAddress)
+
+	// Set group volume on coordinator
+	grc := sonos.NewGroupRenderingControl(coordinatorIP)
+	if err := grc.SetGroupVolume(ctx, volume); err != nil {
+		slog.Error("failed to set group volume", "error", err)
+		http.Error(w, "failed to set group volume", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// HandleGetGroupInfo handles GET /sonos/group-info requests.
+// Returns information about the current group (if any).
+// Accepts optional ?uuid= parameter to check a specific device's group,
+// otherwise uses the device from the current playback session.
+func (h *PlayerHandler) HandleGetGroupInfo(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var device *store.SonosDevice
+
+	// Check for explicit device UUID parameter first
+	requestedUUID := r.URL.Query().Get("uuid")
+	if requestedUUID != "" {
+		var err error
+		device, err = h.sonosStore.Get(requestedUUID)
+		if err != nil || device == nil {
+			slog.Debug("requested device not found", "uuid", requestedUUID)
+		}
+	}
+
+	// If no explicit device, try to get from playback session
+	if device == nil {
+		playback, err := h.playbackStore.GetBySessionID(session.ID)
+		if err == nil && playback != nil {
+			device, _ = h.sonosStore.Get(playback.SonosUUID)
+		}
+	}
+
+	// No device found - return default response
+	if device == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"is_group":   false,
+			"group_size": 1,
+		})
+		return
+	}
+
+	ctx := r.Context()
+
+	// Get group info
+	zgt := sonos.NewZoneGroupTopology(device.IPAddress)
+	state, err := zgt.GetZoneGroupState(ctx)
+	if err != nil {
+		slog.Warn("failed to get zone group state", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"is_group":   false,
+			"group_size": 1,
+		})
+		return
+	}
+
+	// Find the group this device belongs to
+	for _, group := range state.ZoneGroups {
+		for _, member := range group.Members {
+			if member.IPAddress == device.IPAddress {
+				// Found our group
+				var visibleMembers []map[string]interface{}
+				var coordinatorName string
+
+				for _, m := range group.Members {
+					if !m.Invisible {
+						memberInfo := map[string]interface{}{
+							"uuid":           m.UUID,
+							"name":           m.ZoneName,
+							"ip":             m.IPAddress,
+							"is_coordinator": m.UUID == group.Coordinator,
+						}
+						visibleMembers = append(visibleMembers, memberInfo)
+						if m.UUID == group.Coordinator {
+							coordinatorName = m.ZoneName
+						}
+					}
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"is_group":         len(visibleMembers) > 1,
+					"group_size":       len(visibleMembers),
+					"coordinator_uuid": group.Coordinator,
+					"coordinator_name": coordinatorName,
+					"members":          visibleMembers,
+				})
+				return
+			}
+		}
+	}
+
+	// Device not found in any group (standalone)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"is_group":   false,
+		"group_size": 1,
+	})
+}
+
+// HandleGetMemberVolumes handles GET /volume/members requests.
+// Returns the individual volumes of all group members.
+// Accepts optional ?uuid= parameter to query a specific device's group.
+func (h *PlayerHandler) HandleGetMemberVolumes(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var device *store.SonosDevice
+
+	// Check for explicit device UUID parameter first
+	requestedUUID := r.URL.Query().Get("uuid")
+	if requestedUUID != "" {
+		var err error
+		device, err = h.sonosStore.Get(requestedUUID)
+		if err != nil || device == nil {
+			slog.Debug("requested device not found", "uuid", requestedUUID)
+		}
+	}
+
+	// If no explicit device, try to get from playback session
+	if device == nil {
+		playback, err := h.playbackStore.GetBySessionID(session.ID)
+		if err == nil && playback != nil {
+			device, _ = h.sonosStore.Get(playback.SonosUUID)
+		}
+	}
+
+	if device == nil {
+		http.Error(w, "no device found", http.StatusNotFound)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Get group info
+	zgt := sonos.NewZoneGroupTopology(device.IPAddress)
+	state, err := zgt.GetZoneGroupState(ctx)
+	if err != nil {
+		slog.Warn("failed to get zone group state", "error", err)
+		http.Error(w, "failed to get group info", http.StatusInternalServerError)
+		return
+	}
+
+	// Find the group this device belongs to
+	for _, group := range state.ZoneGroups {
+		for _, member := range group.Members {
+			if member.IPAddress == device.IPAddress {
+				// Found our group - get volume for each visible member
+				var members []map[string]interface{}
+
+				for _, m := range group.Members {
+					if m.Invisible {
+						continue
+					}
+
+					// Get individual volume for this member
+					avt := sonos.NewAVTransport(m.IPAddress)
+					volume, err := avt.GetVolume(ctx)
+					if err != nil {
+						slog.Warn("failed to get member volume",
+							"member_ip", m.IPAddress,
+							"member_name", m.ZoneName,
+							"error", err)
+						volume = 0
+					}
+
+					memberInfo := map[string]interface{}{
+						"uuid":           m.UUID,
+						"name":           m.ZoneName,
+						"ip":             m.IPAddress,
+						"volume":         volume,
+						"is_coordinator": m.UUID == group.Coordinator,
+					}
+					members = append(members, memberInfo)
+				}
+
+				// Sort members alphabetically by name
+				sort.Slice(members, func(i, j int) bool {
+					nameI, _ := members[i]["name"].(string)
+					nameJ, _ := members[j]["name"].(string)
+					return nameI < nameJ
+				})
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"members": members,
+				})
+				return
+			}
+		}
+	}
+
+	// Device not found in any group
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"members": []interface{}{},
+	})
+}
+
+// HandleSetMemberVolume handles POST /volume/member requests.
+// Sets the volume for a specific group member.
+func (h *PlayerHandler) HandleSetMemberVolume(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	memberIP := r.FormValue("ip")
+	volumeStr := r.FormValue("volume")
+
+	if memberIP == "" {
+		http.Error(w, "ip is required", http.StatusBadRequest)
+		return
+	}
+
+	if volumeStr == "" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	volume, err := strconv.Atoi(volumeStr)
+	if err != nil {
+		http.Error(w, "invalid volume", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Set volume on the specific member
+	avt := sonos.NewAVTransport(memberIP)
+	if err := avt.SetVolume(ctx, volume); err != nil {
+		slog.Error("failed to set member volume",
+			"member_ip", memberIP,
+			"volume", volume,
+			"error", err)
+		http.Error(w, "failed to set member volume", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Debug("set member volume", "member_ip", memberIP, "volume", volume)
+	w.WriteHeader(http.StatusOK)
+}
+
+// HandleGetAllPlayers handles GET /sonos/all-players requests.
+// Returns all available Sonos players with their current group status.
+// Accepts optional ?uuid= parameter to specify the current device.
+func (h *PlayerHandler) HandleGetAllPlayers(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Check for explicit device UUID parameter first
+	currentDeviceUUID := r.URL.Query().Get("uuid")
+
+	// If no explicit device, try to get from playback session
+	if currentDeviceUUID == "" {
+		playback, err := h.playbackStore.GetBySessionID(session.ID)
+		if err == nil && playback != nil {
+			currentDeviceUUID = playback.SonosUUID
+		}
+	}
+
+	// Get all devices from the store
+	devices, err := h.sonosStore.List()
+	if err != nil {
+		slog.Error("failed to list devices", "error", err)
+		http.Error(w, "failed to list devices", http.StatusInternalServerError)
+		return
+	}
+
+	if len(devices) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"players": []interface{}{},
+		})
+		return
+	}
+
+	ctx := r.Context()
+
+	// Get zone group state from any device to determine group memberships
+	var zoneState *sonos.ZoneGroupState
+	for _, device := range devices {
+		zgt := sonos.NewZoneGroupTopology(device.IPAddress)
+		state, err := zgt.GetZoneGroupState(ctx)
+		if err == nil {
+			zoneState = state
+			break
+		}
+	}
+
+	if zoneState == nil {
+		// Return devices without group info
+		var players []map[string]interface{}
+		for _, device := range devices {
+			players = append(players, map[string]interface{}{
+				"uuid":      device.UUID,
+				"name":      device.Name,
+				"ip":        device.IPAddress,
+				"model":     device.Model,
+				"reachable": device.IsReachable,
+			})
+		}
+		// Sort players alphabetically by name
+		sort.Slice(players, func(i, j int) bool {
+			nameI, _ := players[i]["name"].(string)
+			nameJ, _ := players[j]["name"].(string)
+			return nameI < nameJ
+		})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"players": players,
+		})
+		return
+	}
+
+	// Build group info map
+	groupInfo := zoneState.GetGroupInfo()
+	invisibleUUIDs := zoneState.GetInvisibleUUIDs()
+
+	// Build coordinator map (normalized UUID -> coordinator UUID)
+	// Use normalized UUIDs (without "uuid:" prefix) for consistent comparison
+	coordinatorMap := make(map[string]string)
+	for _, group := range zoneState.ZoneGroups {
+		for _, member := range group.Members {
+			normalizedMemberUUID := sonos.NormalizeUUID(member.UUID)
+			coordinatorMap[normalizedMemberUUID] = group.Coordinator
+		}
+	}
+
+	// Find the coordinator UUID for the current device's group
+	currentGroupCoordinator := ""
+	if currentDeviceUUID != "" {
+		normalizedCurrentUUID := sonos.NormalizeUUID(currentDeviceUUID)
+		currentGroupCoordinator = coordinatorMap[normalizedCurrentUUID]
+	}
+
+	// Track which UUIDs we've already added from the device store
+	addedUUIDs := make(map[string]bool)
+
+	var players []map[string]interface{}
+	for _, device := range devices {
+		// Normalize device UUID for consistent lookup
+		normalizedDeviceUUID := sonos.NormalizeUUID(device.UUID)
+
+		// Skip invisible players (stereo pair slaves)
+		if invisibleUUIDs[normalizedDeviceUUID] {
+			continue
+		}
+
+		info := groupInfo[normalizedDeviceUUID]
+		coordUUID := coordinatorMap[normalizedDeviceUUID]
+
+		// Determine if this player is in the current group
+		inCurrentGroup := false
+		if currentGroupCoordinator != "" && coordUUID == currentGroupCoordinator {
+			inCurrentGroup = true
+		}
+
+		players = append(players, map[string]interface{}{
+			"uuid":             device.UUID,
+			"name":             device.Name,
+			"ip":               device.IPAddress,
+			"model":            device.Model,
+			"reachable":        device.IsReachable,
+			"is_coordinator":   info.IsCoordinator,
+			"group_size":       info.GroupSize,
+			"coordinator_uuid": coordUUID,
+			"in_current_group": inCurrentGroup,
+		})
+		addedUUIDs[normalizedDeviceUUID] = true
+	}
+
+	// Also include devices from zone group state that aren't in the device store
+	// This ensures we show all members of the current group even if not discovered via SSDP
+	for _, group := range zoneState.ZoneGroups {
+		for _, member := range group.Members {
+			normalizedMemberUUID := sonos.NormalizeUUID(member.UUID)
+
+			// Skip if already added from device store
+			if addedUUIDs[normalizedMemberUUID] {
+				continue
+			}
+
+			// Skip invisible players
+			if member.Invisible {
+				continue
+			}
+
+			info := groupInfo[normalizedMemberUUID]
+			coordUUID := coordinatorMap[normalizedMemberUUID]
+
+			// Determine if this player is in the current group
+			inCurrentGroup := false
+			if currentGroupCoordinator != "" && coordUUID == currentGroupCoordinator {
+				inCurrentGroup = true
+			}
+
+			players = append(players, map[string]interface{}{
+				"uuid":             "uuid:" + member.UUID, // Match device store format
+				"name":             member.ZoneName,
+				"ip":               member.IPAddress,
+				"model":            "Unknown", // Not available from zone group state
+				"reachable":        true,      // If it's in zone group state, it's reachable
+				"is_coordinator":   info.IsCoordinator,
+				"group_size":       info.GroupSize,
+				"coordinator_uuid": coordUUID,
+				"in_current_group": inCurrentGroup,
+			})
+			addedUUIDs[normalizedMemberUUID] = true
+		}
+	}
+
+	// Sort players alphabetically by name
+	sort.Slice(players, func(i, j int) bool {
+		nameI, _ := players[i]["name"].(string)
+		nameJ, _ := players[j]["name"].(string)
+		return nameI < nameJ
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"players": players,
+	})
+}
+
+// HandleJoinGroup handles POST /sonos/group/join requests.
+// Makes a player join a group by specifying the coordinator.
+func (h *PlayerHandler) HandleJoinGroup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	playerIP := r.FormValue("player_ip")
+	coordinatorUUID := r.FormValue("coordinator_uuid")
+
+	if playerIP == "" || coordinatorUUID == "" {
+		http.Error(w, "player_ip and coordinator_uuid are required", http.StatusBadRequest)
+		return
+	}
+
+	// Normalize coordinator UUID (strip "uuid:" prefix if present)
+	normalizedCoordinatorUUID := sonos.NormalizeUUID(coordinatorUUID)
+
+	ctx := r.Context()
+
+	// Join the group
+	avt := sonos.NewAVTransport(playerIP)
+	if err := avt.JoinGroup(ctx, normalizedCoordinatorUUID); err != nil {
+		slog.Error("failed to join group",
+			"player_ip", playerIP,
+			"coordinator_uuid", coordinatorUUID,
+			"error", err)
+		http.Error(w, "failed to join group", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// HandleLeaveGroup handles POST /sonos/group/leave requests.
+// Makes a player leave its current group and become standalone.
+func (h *PlayerHandler) HandleLeaveGroup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	playerIP := r.FormValue("player_ip")
+	if playerIP == "" {
+		http.Error(w, "player_ip is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Leave the group
+	avt := sonos.NewAVTransport(playerIP)
+	if err := avt.LeaveGroup(ctx); err != nil {
+		slog.Error("failed to leave group",
+			"player_ip", playerIP,
+			"error", err)
+		http.Error(w, "failed to leave group", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 // GetSession extracts the session from context.
