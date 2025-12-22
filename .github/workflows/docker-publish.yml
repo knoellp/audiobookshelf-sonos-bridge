@@ -88,14 +88,12 @@ jobs:
           docker images test-build
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
-          context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          provenance: false
           build-args: |
             VERSION=${{ steps.prep.outputs.version }}
             COMMIT=${{ steps.prep.outputs.commit }}
