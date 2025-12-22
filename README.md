@@ -38,25 +38,24 @@ docker run -d \
 
 ### Using Docker Compose
 
-1. Clone the repository and copy the example config:
+1. Download the example compose file:
 ```bash
-git clone https://github.com/knoellp/audiobookshelf-sonos-bridge.git
-cd audiobookshelf-sonos-bridge
-cp .env.example .env
+curl -O https://raw.githubusercontent.com/knoellp/audiobookshelf-sonos-bridge/main/docker-compose.example.yml
+mv docker-compose.example.yml docker-compose.yml
 ```
 
-2. Edit `.env` with your settings:
-```bash
-BRIDGE_ABS_URL=http://your-audiobookshelf-server:13378
-BRIDGE_PUBLIC_URL=http://your-host-ip:8080
-BRIDGE_SESSION_SECRET=your-secret-min-32-chars
-MEDIA_PATH=/path/to/your/audiobooks
-```
+2. Edit `docker-compose.yml` with your settings:
+   - `BRIDGE_ABS_URL`: Your Audiobookshelf server URL
+   - `BRIDGE_PUBLIC_URL`: This server's IP (must be accessible from Sonos)
+   - `BRIDGE_SESSION_SECRET`: Generate with `openssl rand -hex 32`
+   - Volume path for `/media`: Same path as Audiobookshelf uses
 
 3. Start the service:
 ```bash
 docker compose up -d
 ```
+
+4. Open `http://your-server-ip:8080` in your browser
 
 ### Building from Source
 
