@@ -41,7 +41,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             # Testing tags: testing-* -> :testing
-            type=match,pattern=testing-(.*),group=0,value=testing
+            type=raw,value=testing,enable=${{ startsWith(github.ref, 'refs/tags/testing-') }}
             # Release tags: v1.2.3 -> 1.2.3, 1.2, 1, latest
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
