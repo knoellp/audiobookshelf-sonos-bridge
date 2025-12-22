@@ -114,6 +114,10 @@ button {
     font-weight: 500;
     transition: all var(--transition);
     gap: 0.5rem;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .btn-primary {
@@ -832,9 +836,10 @@ button {
     }
 }
 
-/* Safe areas for notched devices */
+/* Safe areas for notched devices and standalone WebApp mode */
 @supports (padding: max(0px)) {
     .header {
+        padding-top: env(safe-area-inset-top);
         padding-left: max(1rem, env(safe-area-inset-left));
         padding-right: max(1rem, env(safe-area-inset-right));
     }
@@ -843,6 +848,13 @@ button {
         padding-left: max(1rem, env(safe-area-inset-left));
         padding-right: max(1rem, env(safe-area-inset-right));
         padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    }
+
+    .modal {
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
     }
 }
 
@@ -866,6 +878,8 @@ button {
     right: 0;
     bottom: 0;
     background: rgba(0, 0, 0, 0.7);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .modal-content {
@@ -938,6 +952,11 @@ button {
     transition: all var(--transition);
     width: 100%;
     text-align: left;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    color: var(--text);
 }
 
 .device-card:hover {
@@ -974,6 +993,20 @@ button {
 .device-status {
     font-size: 0.75rem;
     color: var(--error);
+}
+
+.group-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: 10px;
+    margin-left: 0.3rem;
+    vertical-align: middle;
 }
 
 .htmx-indicator {

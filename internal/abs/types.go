@@ -181,17 +181,28 @@ type ItemsResponse struct {
 
 // SearchResponse represents the response from a library search.
 type SearchResponse struct {
-	Book      []SearchBookResult `json:"book"`
-	Narrators []interface{}      `json:"narrators"`
-	Tags      []interface{}      `json:"tags"`
-	Genres    []interface{}      `json:"genres"`
-	Series    []interface{}      `json:"series"`
-	Authors   []interface{}      `json:"authors"`
+	Book      []SearchBookResult   `json:"book"`
+	Narrators []interface{}        `json:"narrators"`
+	Tags      []interface{}        `json:"tags"`
+	Genres    []interface{}        `json:"genres"`
+	Series    []SearchSeriesResult `json:"series"`
+	Authors   []SearchAuthorResult `json:"authors"`
 }
 
 // SearchBookResult represents a single book result from search.
 type SearchBookResult struct {
 	LibraryItem LibraryItem `json:"libraryItem"`
+}
+
+// SearchAuthorResult represents an author result from search.
+type SearchAuthorResult struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// SearchSeriesResult represents a series result from search.
+type SearchSeriesResult struct {
+	Series Series `json:"series"`
 }
 
 // FilterData represents the filter data for a library.
