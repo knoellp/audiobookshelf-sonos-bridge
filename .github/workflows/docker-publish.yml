@@ -60,6 +60,15 @@ jobs:
           echo "commit=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
+      - name: Debug - List files
+        run: |
+          echo "=== Go files ==="
+          find . -name "*.go" | head -50
+          echo "=== go.mod ==="
+          cat go.mod
+          echo "=== Check build locally ==="
+          go build -buildvcs=false ./... || echo "Local build check done"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -72,8 +81,6 @@ jobs:
             VERSION=${{ steps.prep.outputs.version }}
             COMMIT=${{ steps.prep.outputs.commit }}
             BUILD_DATE=${{ steps.prep.outputs.build_date }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
