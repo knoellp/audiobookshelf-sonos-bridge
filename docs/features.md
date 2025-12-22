@@ -154,6 +154,332 @@ Ermöglicht das Bilden und Auflösen von Sonos-Gruppen direkt aus der App heraus
 
 ---
 
+## Sonos-Gruppen-Wiedergabe & Lautstärkeregelung
+
+**Status:** Geplant
+**Priorität:** Hoch (kritisch für Gruppen-Nutzung)
+
+### Problem 1: Wiedergabe nur auf Gruppenführer
+
+**Symptom:** Wenn ein gruppierter Lautsprecher als Ziel ausgewählt wird, spielt das Audio nur auf dem Gruppenführer (Coordinator), nicht auf allen Gruppenmitgliedern.
+
+**Ursache:** Die aktuelle Implementierung sendet AVTransport-Befehle (SetAVTransportURI, Play, Pause, etc.) direkt an die IP-Adresse des vom Benutzer ausgewählten Geräts. Bei Sonos-Gruppen müssen **alle Befehle an den Coordinator** gesendet werden - nur dieser kann die gesamte Gruppe steuern.
+
+**Beispiel des Problems:**
+```
+Gruppe: Kamin (Coordinator) + Küche (Member)
+Benutzer wählt: Küche
+Aktuell: SetAVTransportURI → 192.168.1.50 (Küche) → Nur Küche spielt
+Korrekt: SetAVTransportURI → 192.168.1.40 (Kamin) → Ganze Gruppe spielt
+```
+
+### Problem 2: Gruppen-Lautstärkeregelung
+
+**Symptom:** Die aktuelle Lautstärkeregelung kann nur einzelne Lautsprecher steuern. Bei Gruppen fehlen:
+1. **Relative Gruppen-Lautstärke:** Alle Lautsprecher proportional lauter/leiser
+2. **Individuelle Lautstärke:** Einzelne Lautsprecher in der Gruppe anpassen
+
+### Lösung: Coordinator-Routing
+
+#### Schritt 1: Coordinator ermitteln
+
+Die bestehende `GetGroupInfo()` Funktion in `internal/sonos/zonegroupstate.go` liefert bereits:
+```go
+type GroupInfo struct {
+    CoordinatorUUID string   // UUID des Gruppenführers
+    CoordinatorIP   string   // IP-Adresse des Gruppenführers
+    Members         []Member // Alle Gruppenmitglieder
+    GroupSize       int      // Anzahl der Mitglieder
+}
+```
+
+#### Schritt 2: AVTransport-Befehle an Coordinator routen
+
+**Vor dem Senden von AVTransport-Befehlen:**
+1. ZoneGroupTopology des ausgewählten Geräts abfragen
+2. Coordinator-IP aus GroupInfo extrahieren
+3. Alle AVTransport-Befehle an Coordinator-IP senden
+
+**Betroffene Stellen in `internal/web/player.go`:**
+
+| Handler | Aktuelle Logik | Neue Logik |
+|---------|---------------|------------|
+| `HandlePlay` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
+| `HandleResume` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
+| `HandlePause` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
+| `HandleStop` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
+| `HandleSeek` | Sendet an `playback.SonosIP` | Coordinator-IP ermitteln, dahin senden |
+
+**Implementierungsvorschlag:**
+
+```go
+// Neue Hilfsfunktion in player.go oder sonos package
+func (h *PlayerHandler) getCoordinatorIP(ctx context.Context, deviceIP string) (string, error) {
+    zgClient := sonos.NewZoneGroupClient(deviceIP)
+    groupInfo, err := zgClient.GetGroupInfo(ctx)
+    if err != nil {
+        // Fallback: Gerät ist standalone, eigene IP verwenden
+        return deviceIP, nil
+    }
+    if groupInfo.CoordinatorIP != "" {
+        return groupInfo.CoordinatorIP, nil
+    }
+    return deviceIP, nil
+}
+
+// Verwendung in HandlePlay:
+func (h *PlayerHandler) HandlePlay(...) {
+    // ... bestehender Code ...
+
+    // NEU: Coordinator-IP ermitteln
+    targetIP, err := h.getCoordinatorIP(ctx, selectedDeviceIP)
+    if err != nil {
+        slog.Warn("could not get coordinator, using selected device", "error", err)
+        targetIP = selectedDeviceIP
+    }
+
+    // AVTransport-Client mit Coordinator-IP erstellen
+    avt := sonos.NewAVTransportClient(targetIP)
+    avt.SetAVTransportURI(ctx, streamURL, metadata)
+    avt.Play(ctx)
+
+    // Playback-Session speichert weiterhin die UUID des AUSGEWÄHLTEN Geräts
+    // (für UI-Anzeige), aber Befehle gehen an Coordinator
+}
+```
+
+**Wichtig:** Die `PlaybackSession` speichert weiterhin die UUID/IP des vom Benutzer ausgewählten Geräts (für UI-Konsistenz). Die Coordinator-Ermittlung erfolgt dynamisch bei jedem Befehl.
+
+### Lösung: Gruppen-Lautstärkeregelung
+
+#### Sonos-Services für Lautstärke
+
+| Service | Port | Zweck |
+|---------|------|-------|
+| RenderingControl | 1400 | Einzelgerät: Lautstärke, Bass, Treble |
+| GroupRenderingControl | 1400 | Gruppe: Relative Lautstärke aller Mitglieder |
+
+#### GroupRenderingControl SOAP-Actions
+
+**1. Gruppen-Lautstärke setzen (relativ):**
+```xml
+<u:SetGroupVolume xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1">
+  <InstanceID>0</InstanceID>
+  <DesiredVolume>50</DesiredVolume>
+</u:SetGroupVolume>
+```
+
+**2. Gruppen-Lautstärke abfragen:**
+```xml
+<u:GetGroupVolume xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1">
+  <InstanceID>0</InstanceID>
+</u:GetGroupVolume>
+```
+
+**3. Relative Lautstärke einzelner Mitglieder:**
+```xml
+<u:SetRelativeGroupVolume xmlns:u="urn:schemas-upnp-org:service:GroupRenderingControl:1">
+  <InstanceID>0</InstanceID>
+  <Adjustment>-10</Adjustment>  <!-- Relativ: -100 bis +100 -->
+</u:SetRelativeGroupVolume>
+```
+
+#### UI-Konzept für Gruppen-Lautstärke
+
+**Aktuelle UI (Einzelgerät):**
+```
+┌─────────────────────────────────────┐
+│  🔊 ━━━━━━━━━━━━━━━━━━━━━━━ 65%    │
+└─────────────────────────────────────┘
+```
+
+**Neue UI (Gruppe):**
+```
+┌─────────────────────────────────────┐
+│  Gruppen-Lautstärke                 │
+│  🔊 ━━━━━━━━━━━━━━━━━━━━━━━ 65%    │  ← Steuert alle proportional
+│                                     │
+│  ▼ Einzelne Lautsprecher            │  ← Aufklappbar
+│  ├─ Kamin 👑        🔊━━━━━ 70%    │
+│  └─ Küche           🔊━━━━━ 60%    │
+└─────────────────────────────────────┘
+```
+
+**Verhalten:**
+1. **Gruppen-Slider:** Ändert alle Mitglieder proportional (über GroupRenderingControl)
+2. **Einzel-Slider:** Ändert nur dieses Gerät (über RenderingControl an jeweilige IP)
+3. **Aufklappbar:** Einzelne Lautsprecher nur bei Bedarf sichtbar
+
+### Technische Umsetzung
+
+#### Backend-Änderungen
+
+**1. Neuer Client: `internal/sonos/grouprendering.go`**
+```go
+type GroupRenderingClient struct {
+    ip string
+}
+
+func NewGroupRenderingClient(ip string) *GroupRenderingClient
+
+func (c *GroupRenderingClient) GetGroupVolume(ctx context.Context) (int, error)
+func (c *GroupRenderingClient) SetGroupVolume(ctx context.Context, volume int) error
+func (c *GroupRenderingClient) GetGroupMute(ctx context.Context) (bool, error)
+func (c *GroupRenderingClient) SetGroupMute(ctx context.Context, mute bool) error
+```
+
+**2. Erweiterung `internal/sonos/rendering.go`:**
+```go
+// Bestehend - Einzelgerät:
+func (c *RenderingClient) GetVolume(ctx context.Context) (int, error)
+func (c *RenderingClient) SetVolume(ctx context.Context, volume int) error
+
+// Neu - Für einzelne Gruppenmitglieder:
+// (bereits vorhanden, wird an jeweilige Geräte-IP aufgerufen)
+```
+
+**3. Neue API-Endpoints in `internal/web/player.go`:**
+```
+GET  /volume/group         → Gruppen-Lautstärke abfragen
+POST /volume/group         → Gruppen-Lautstärke setzen
+GET  /volume/members       → Lautstärke aller Mitglieder
+POST /volume/member/{uuid} → Einzelgerät-Lautstärke setzen
+```
+
+**4. Coordinator-Routing für alle AVTransport-Befehle:**
+
+In jedem Handler vor AVTransport-Aufrufen:
+```go
+coordinatorIP, _ := h.getCoordinatorIP(ctx, playback.SonosIP)
+avt := sonos.NewAVTransportClient(coordinatorIP)
+```
+
+#### Frontend-Änderungen
+
+**1. `web/templates/partials/transport.html`:**
+- Gruppen-Lautstärke-Slider hinzufügen
+- Aufklappbare Einzelgeräte-Liste
+- Unterscheidung: Standalone vs. Gruppe
+
+**2. JavaScript-Erweiterungen:**
+```javascript
+// Prüfen ob Gruppe aktiv
+async function checkGroupStatus() {
+    const response = await fetch('/sonos/group-info/' + currentDeviceUUID);
+    const data = await response.json();
+    if (data.groupSize > 1) {
+        showGroupVolumeControls(data.members);
+    } else {
+        showSingleVolumeControl();
+    }
+}
+
+// Gruppen-Lautstärke ändern
+async function setGroupVolume(volume) {
+    await fetch('/volume/group', {
+        method: 'POST',
+        body: JSON.stringify({ volume: volume })
+    });
+}
+
+// Einzelgerät-Lautstärke ändern
+async function setMemberVolume(uuid, volume) {
+    await fetch('/volume/member/' + uuid, {
+        method: 'POST',
+        body: JSON.stringify({ volume: volume })
+    });
+}
+```
+
+### Datenfluss bei Gruppen-Wiedergabe
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ 1. Benutzer wählt "Küche" (Mitglied einer Gruppe)              │
+└────────────────────────────────────────────────────────────────┘
+                              ↓
+┌────────────────────────────────────────────────────────────────┐
+│ 2. Backend: getCoordinatorIP("Küche-IP")                       │
+│    → ZoneGroupTopology abfragen                                │
+│    → Coordinator = "Kamin-IP"                                  │
+└────────────────────────────────────────────────────────────────┘
+                              ↓
+┌────────────────────────────────────────────────────────────────┐
+│ 3. AVTransport-Befehle → Kamin-IP (Coordinator)                │
+│    SetAVTransportURI, Play, Pause, Seek, Stop                  │
+└────────────────────────────────────────────────────────────────┘
+                              ↓
+┌────────────────────────────────────────────────────────────────┐
+│ 4. Sonos-Gruppe: Alle Mitglieder spielen synchron              │
+│    Kamin + Küche spielen dasselbe Audio                        │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Datenfluss bei Gruppen-Lautstärke
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ Gruppen-Slider bewegen                                         │
+└────────────────────────────────────────────────────────────────┘
+                              ↓
+┌────────────────────────────────────────────────────────────────┐
+│ POST /volume/group { volume: 60 }                              │
+│ → GroupRenderingControl.SetGroupVolume(60) an Coordinator      │
+│ → Alle Mitglieder werden proportional angepasst                │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│ Einzel-Slider (Küche) bewegen                                  │
+└────────────────────────────────────────────────────────────────┘
+                              ↓
+┌────────────────────────────────────────────────────────────────┐
+│ POST /volume/member/RINCON_KÜCHE { volume: 45 }                │
+│ → RenderingControl.SetVolume(45) an Küche-IP                   │
+│ → Nur Küche wird angepasst                                     │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Offene Fragen
+
+1. **Coordinator-Wechsel während Wiedergabe:** Was passiert, wenn sich die Gruppe während der Wiedergabe ändert (z.B. Coordinator verlässt Gruppe)?
+   - **Vorschlag:** Bei jedem Befehl Coordinator neu ermitteln (nicht cachen)
+
+2. **Status-Polling bei Gruppen:** Soll der Status vom Coordinator oder vom ausgewählten Gerät gelesen werden?
+   - **Vorschlag:** Vom Coordinator, da dieser den aktuellen Playback-Status hat
+
+3. **UI bei Gruppenwechsel:** Soll die Lautstärke-UI automatisch aktualisiert werden, wenn sich Gruppen ändern?
+   - **Vorschlag:** Bei jedem Status-Poll auch Gruppen-Info prüfen
+
+4. **Latenz bei Coordinator-Ermittlung:** Jede AVTransport-Aktion erfordert einen zusätzlichen HTTP-Request für ZoneGroupTopology
+   - **Vorschlag:** Coordinator-Info kurzzeitig cachen (5-10 Sekunden)
+
+### Abhängigkeiten
+
+- ZoneGroupTopology-Implementierung (vorhanden in `zonegroupstate.go`)
+- RenderingControl-Implementierung (vorhanden in `rendering.go`)
+- AVTransport-Implementierung (vorhanden in `avtransport.go`)
+- GroupRenderingControl (NEU zu implementieren)
+
+### Geschätzter Aufwand
+
+| Komponente | Aufwand |
+|------------|---------|
+| Coordinator-Routing (Backend) | 2-3h |
+| GroupRenderingControl Client | 1-2h |
+| Volume API Endpoints | 1-2h |
+| Frontend: Gruppen-Lautstärke UI | 3-4h |
+| Frontend: Einzelgeräte-Liste | 2-3h |
+| Testing mit echten Gruppen | 2-3h |
+| **Gesamt** | **11-17h** |
+
+### Priorisierung
+
+1. **Phase 1:** Coordinator-Routing (Problem 1 lösen - Wiedergabe funktioniert auf Gruppen)
+2. **Phase 2:** Gruppen-Lautstärke (Haupt-Slider)
+3. **Phase 3:** Einzelgeräte-Lautstärke (Feintuning)
+
+---
+
 ## Bibliotheks-Filter und Serien-Darstellung
 
 **Status:** Geplant
@@ -523,3 +849,126 @@ Zusätzlich zur Navigation: Filter-Chips in der normalen Bücher-Ansicht:
 
 - [Audiobookshelf API Reference](https://api.audiobookshelf.org/)
 - [GitHub Issue: Collapse Series Bug](https://github.com/advplyr/audiobookshelf/issues/3049)
+
+---
+
+## Öffentliche Installation & CI/CD
+
+**Status:** Geplant
+**Priorität:** Mittel
+
+### Beschreibung
+
+Verbesserungen für die öffentliche Nutzung des Projekts auf GitHub.
+
+### Erledigte Aufgaben (2025-12-22)
+
+- [x] CLAUDE.md bereinigt (private Pfade/IPs entfernt)
+- [x] README.md Umgebungsvariablen korrigiert (`ABS_URL` → `BRIDGE_ABS_URL` etc.)
+- [x] LICENSE Datei erstellt (MIT)
+- [x] docker-compose.yml aufgeräumt (projektspezifische Volumes entfernt)
+
+### Offene Aufgaben
+
+#### Phase 1: GitHub Actions CI/CD
+
+| # | Aufgabe | Beschreibung |
+|---|---------|--------------|
+| 1.1 | **GitHub Actions Workflow** | Automatischer Docker-Build bei git push/tag |
+| 1.2 | **Multi-Arch Build** | AMD64 + ARM64 für Raspberry Pi / Mac Silicon |
+| 1.3 | **ghcr.io Publishing** | Images unter `ghcr.io/knoellp/audiobookshelf-sonos-bridge` veröffentlichen |
+| 1.4 | **Versionierung** | `v1.0.0` Tags → Docker-Tags automatisch erstellen |
+
+**Beispiel `.github/workflows/docker.yml`:**
+```yaml
+name: Build and Push Docker Image
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+```
+
+#### Phase 2: Benutzerfreundlichkeit
+
+| # | Aufgabe | Beschreibung |
+|---|---------|--------------|
+| 2.1 | **Startup-Validierung** | Beim Start prüfen: ffmpeg vorhanden? ABS erreichbar? |
+| 2.2 | **HEALTHCHECK fixen** | Port dynamisch oder entfernen (Docker health via /health reicht) |
+| 2.3 | **Quickstart Guide** | Vereinfachte 5-Minuten-Anleitung |
+
+**Startup-Validierung Beispiel:**
+```go
+func validateStartup(cfg *config.Config) error {
+    // Check ffmpeg
+    if _, err := exec.LookPath("ffmpeg"); err != nil {
+        return fmt.Errorf("ffmpeg not found in PATH")
+    }
+
+    // Check ABS connectivity
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    resp, err := http.Get(cfg.ABSURL + "/ping")
+    if err != nil {
+        return fmt.Errorf("cannot reach Audiobookshelf at %s: %w", cfg.ABSURL, err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != 200 {
+        return fmt.Errorf("Audiobookshelf returned status %d", resp.StatusCode)
+    }
+
+    return nil
+}
+```
+
+#### Phase 3: Fortgeschritten (optional)
+
+| # | Aufgabe | Beschreibung |
+|---|---------|--------------|
+| 3.1 | **Helm Chart** | Für Kubernetes-Nutzer |
+| 3.2 | **Unraid Template** | Für Unraid Community Apps |
+| 3.3 | **Config Wizard** | Web-UI zur Erstkonfiguration |
+
+### Geschätzter Aufwand
+
+| Komponente | Aufwand |
+|------------|---------|
+| GitHub Actions Workflow | 1-2h |
+| Multi-Arch Build testen | 1h |
+| Startup-Validierung | 1h |
+| HEALTHCHECK fix | 15min |
+| **Gesamt Phase 1+2** | **3-5h** |
