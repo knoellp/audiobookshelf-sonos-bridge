@@ -61,32 +61,6 @@ jobs:
           # Use simple date format without colons to avoid escaping issues
           echo "build_date=$(date -u +'%Y%m%d')" >> $GITHUB_OUTPUT
 
-      - name: Debug - Show context
-        run: |
-          echo "=== Git info ==="
-          git log --oneline -3
-          echo "=== Files in context ==="
-          ls -la
-          echo "=== Go files ==="
-          find . -name "*.go" -type f | wc -l
-          echo "=== go.mod ==="
-          head -20 go.mod
-          echo "=== Check .dockerignore ==="
-          cat .dockerignore
-
-      - name: Debug - Test regular docker build
-        run: |
-          echo "=== Testing regular docker build ==="
-          docker build --progress=plain \
-            --build-arg VERSION=${{ steps.prep.outputs.version }} \
-            --build-arg COMMIT=${{ steps.prep.outputs.commit }} \
-            --build-arg BUILD_DATE=${{ steps.prep.outputs.build_date }} \
-            -t test-build . 2>&1 | tee /tmp/build.log || true
-          echo "=== Last 100 lines of build log ==="
-          tail -100 /tmp/build.log
-          echo "=== Checking if build succeeded ==="
-          docker images test-build
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
