@@ -58,7 +58,8 @@ jobs:
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "commit=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-          echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          # Use simple date format without colons to avoid escaping issues
+          echo "build_date=$(date -u +'%Y%m%d')" >> $GITHUB_OUTPUT
 
       - name: Debug - Show context
         run: |
@@ -94,6 +95,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
           build-args: |
             VERSION=${{ steps.prep.outputs.version }}
             COMMIT=${{ steps.prep.outputs.commit }}
