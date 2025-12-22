@@ -369,3 +369,69 @@ In `library.go:343` wird `item.Media.Duration` direkt verwendet ohne Fallback au
 ### Geänderte Dateien
 - `internal/web/library.go` - Duration-Berechnung und DetailedItem mit RemainingMin/ProgressPct
 - `web/templates/item.html` - Anzeige der Zeitinformationen mit verbleibender Zeit
+
+---
+
+## Issue 12: Sonos-Gruppierung - IN PROGRESS
+
+**Genehmigt:** 2025-12-22
+**Detaillierter Plan:** [docs/features.md](features.md#sonos-gruppierung---implementierungsplan)
+
+### Phase 1: Coordinator-Routing
+
+**Ziel:** Wiedergabe funktioniert auf allen Gruppenmitgliedern
+
+| # | Task | Status |
+|---|------|--------|
+| 1.1 | `getCoordinatorIP()` in `internal/web/player.go` erstellen | [ ] |
+| 1.2 | `HandlePlay` anpassen (Coordinator-Routing) | [ ] |
+| 1.3 | `HandleResume` anpassen | [ ] |
+| 1.4 | `HandlePause` anpassen | [ ] |
+| 1.5 | `HandleStop` anpassen | [ ] |
+| 1.6 | `HandleSeek` anpassen | [ ] |
+| 1.7 | Testen mit Playwright MCP | [ ] |
+
+### Phase 2: Gruppen-Lautstärke
+
+**Ziel:** Ein Slider steuert alle Lautsprecher proportional
+
+| # | Task | Status |
+|---|------|--------|
+| 2.1 | `internal/sonos/grouprendering.go` erstellen | [ ] |
+| 2.2 | API Endpoint `GET /volume/group` erstellen | [ ] |
+| 2.3 | API Endpoint `POST /volume/group` erstellen | [ ] |
+| 2.4 | Frontend: Gruppen-Erkennung beim Laden | [ ] |
+| 2.5 | Frontend: Gruppen-Lautstärke-Slider | [ ] |
+| 2.6 | Frontend: Debouncing implementieren (250ms) | [ ] |
+| 2.7 | Endpoint `/sonos/group-info/{uuid}` für Gruppen-Status | [ ] |
+| 2.8 | Testen mit Playwright MCP | [ ] |
+
+### Phase 3: Individuelle Lautstärke
+
+**Ziel:** Aufklappbare Liste mit Slider pro Lautsprecher
+
+| # | Task | Status |
+|---|------|--------|
+| 3.1 | API Endpoint `GET /volume/members` erstellen | [ ] |
+| 3.2 | API Endpoint `POST /volume/member/{uuid}` erstellen | [ ] |
+| 3.3 | Frontend: Aufklappbare Sektion "Einzelne Lautsprecher" | [ ] |
+| 3.4 | Frontend: Liste mit Membern und individuellen Slidern | [ ] |
+| 3.5 | Frontend: Coordinator-Badge 👑 anzeigen | [ ] |
+| 3.6 | Frontend: Debouncing für individuelle Slider | [ ] |
+| 3.7 | Testen mit Playwright MCP | [ ] |
+
+### Phase 4: Gruppen-Management UI
+
+**Ziel:** Gruppen erstellen und bearbeiten direkt aus der App
+
+| # | Task | Status |
+|---|------|--------|
+| 4.1 | `JoinGroup(coordinatorUUID)` in `avtransport.go` hinzufügen | [ ] |
+| 4.2 | `LeaveGroup()` in `avtransport.go` hinzufügen | [ ] |
+| 4.3 | API Endpoint `POST /sonos/group/join` erstellen | [ ] |
+| 4.4 | API Endpoint `POST /sonos/group/leave` erstellen | [ ] |
+| 4.5 | API Endpoint `POST /sonos/group/update` erstellen (Batch) | [ ] |
+| 4.6 | Frontend: "Gruppe" Button im Sonos-Picker | [ ] |
+| 4.7 | Frontend: Gruppen-Editor Modal | [ ] |
+| 4.8 | Frontend: Checkbox-Liste mit Coordinator-Badge | [ ] |
+| 4.9 | Testen mit Playwright MCP | [ ] |

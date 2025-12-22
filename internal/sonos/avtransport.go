@@ -520,3 +520,53 @@ func (t *AVTransport) doRenderingControlRequest(ctx context.Context, url, action
 	slog.Debug("Sonos RenderingControl command successful", "action", action, "status", resp.StatusCode)
 	return string(responseBody), nil
 }
+
+// JoinGroup makes this player join another player's group.
+// The coordinatorUUID should be in "RINCON_XXX" format.
+// This player will become a group member, playing the same content as the coordinator.
+func (t *AVTransport) JoinGroup(ctx context.Context, coordinatorUUID string) error {
+	// Set the AVTransport URI to point to the coordinator
+	// Format: x-rincon:RINCON_XXX
+	uri := fmt.Sprintf("x-rincon:%s", coordinatorUUID)
+
+	action := "SetAVTransportURI"
+	body := fmt.Sprintf(`
+		<u:SetAVTransportURI xmlns:u="%s">
+			<InstanceID>0</InstanceID>
+			<CurrentURI>%s</CurrentURI>
+			<CurrentURIMetaData></CurrentURIMetaData>
+		</u:SetAVTransportURI>`,
+		AVTransportNamespace,
+		escapeXML(uri),
+	)
+
+	_, err := t.sendCommand(ctx, action, body)
+	if err != nil {
+		return fmt.Errorf("JoinGroup failed: %w", err)
+	}
+
+	slog.Info("player joined group",
+		"player_ip", t.deviceIP,
+		"coordinator_uuid", coordinatorUUID)
+	return nil
+}
+
+// LeaveGroup makes this player leave its current group and become standalone.
+// The player will stop playing and become its own coordinator.
+func (t *AVTransport) LeaveGroup(ctx context.Context) error {
+	action := "BecomeCoordinatorOfStandaloneGroup"
+	body := fmt.Sprintf(`
+		<u:BecomeCoordinatorOfStandaloneGroup xmlns:u="%s">
+			<InstanceID>0</InstanceID>
+		</u:BecomeCoordinatorOfStandaloneGroup>`,
+		AVTransportNamespace,
+	)
+
+	_, err := t.sendCommand(ctx, action, body)
+	if err != nil {
+		return fmt.Errorf("LeaveGroup failed: %w", err)
+	}
+
+	slog.Info("player left group", "player_ip", t.deviceIP)
+	return nil
+}

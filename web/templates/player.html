@@ -222,6 +222,10 @@ async function startPlayback() {
         if (response.ok) {
             playbackActive = true;
             updateStatus();
+            // Refresh group info now that playback is active
+            if (typeof checkGroupInfo === 'function') {
+                checkGroupInfo();
+            }
         } else {
             const text = await response.text();
             console.error('Play failed:', text);

@@ -133,6 +133,8 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 		sortField = "addedAt"
 	case "duration":
 		sortField = "media.duration"
+	case "published":
+		sortField = "media.metadata.publishedYear"
 	}
 
 	// Fetch items - use search endpoint if there's a query

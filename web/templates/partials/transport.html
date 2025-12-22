@@ -115,6 +115,7 @@
                 <line x1="17" y1="9" x2="23" y2="15"></line>
             </svg>
         </button>
+        <span class="group-label" id="group-label" style="display:none">Gruppe</span>
         <input type="range"
                id="volume-slider"
                class="volume-slider"
@@ -126,6 +127,19 @@
         <span class="volume-value" id="volume-value">50%</span>
     </div>
 
+    <!-- Individual Member Volumes (collapsible, shown only for groups) -->
+    <div class="member-volumes-container" id="member-volumes-container" style="display:none">
+        <button type="button" class="member-volumes-toggle" id="member-volumes-toggle" onclick="toggleMemberVolumes()">
+            <span id="member-toggle-text">Einzelne Lautsprecher</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="member-arrow">
+                <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+        </button>
+        <div class="member-volumes-list" id="member-volumes-list" style="display:none">
+            <!-- Members will be populated dynamically -->
+        </div>
+    </div>
+
     <div class="transport-secondary">
         <button type="button" class="transport-btn-secondary" onclick="stop()" title="Stop">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none">
@@ -133,6 +147,44 @@
             </svg>
             Stop
         </button>
+        <button type="button" class="transport-btn-secondary group-btn" id="group-manage-btn" onclick="openGroupEditor()" title="Gruppe verwalten">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            Gruppe
+        </button>
+    </div>
+</div>
+
+<!-- Group Editor Modal -->
+<div class="group-modal-overlay" id="group-modal" style="display:none" onclick="closeGroupEditorOnOverlay(event)">
+    <div class="group-modal">
+        <div class="group-modal-header">
+            <h3>Gruppe verwalten</h3>
+            <button type="button" class="group-modal-close" onclick="closeGroupEditor()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+        <div class="group-modal-body">
+            <div class="group-section">
+                <h4>Aktuelle Gruppe</h4>
+                <div class="group-current-list" id="group-current-list">
+                    <div class="group-loading">Lade...</div>
+                </div>
+            </div>
+            <div class="group-section">
+                <h4>Verfügbare Lautsprecher</h4>
+                <div class="group-available-list" id="group-available-list">
+                    <div class="group-loading">Lade...</div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -142,8 +194,9 @@ let seekAdjusting = false;
 let seekAdjustTimeout;
 let chapters = [];
 
-// Initialize chapters from JSON data
+// Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize chapters from JSON data
     const chaptersData = document.getElementById('chapters-data');
     if (chaptersData) {
         try {
@@ -156,6 +209,40 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Failed to parse chapters:', e);
         }
     }
+
+    // Check group info for volume control
+    checkGroupInfo();
+
+    // Listen for player selection changes in header
+    document.addEventListener('sonosDeviceSelected', function(e) {
+        const newUuid = e.detail ? e.detail.uuid : null;
+
+        // When a different player is selected, update all related UI
+        setTimeout(async () => {
+            checkGroupInfo();
+            // Update member volumes if expanded
+            if (memberVolumesExpanded) {
+                fetchMemberVolumes();
+            }
+            // Update group editor if open
+            if (groupEditorOpen) {
+                fetchAllPlayers();
+            }
+
+            // If playback is active for THIS item, transfer it to the new player
+            const container = document.getElementById('player-container');
+            const currentItemId = container ? container.dataset.itemId : null;
+
+            if (playbackActive && playbackItemId === currentItemId && newUuid) {
+                // Transfer playback to new player by calling resume with new UUID
+                // This will stop the old player and start on the new one at the same position
+                const success = await transportAction('resume', { sonos_uuid: newUuid });
+                if (success) {
+                    console.log('Playback transferred to new player:', newUuid);
+                }
+            }
+        }, 100);
+    });
 });
 
 function renderChapterMarkers() {
@@ -344,6 +431,196 @@ function updateProgressUI(positionSec, durationSec) {
 let volumeDebounceTimer;
 let volumeAdjusting = false;  // Flag to prevent status updates from overwriting slider
 let volumeAdjustTimeout;
+let isGroupMode = false;  // Flag to track if we're controlling group volume
+let groupSize = 1;
+
+async function checkGroupInfo() {
+    try {
+        // Get selected device UUID from header button or localStorage
+        const sonosBtn = document.getElementById('sonos-picker-toggle');
+        let sonosUuid = sonosBtn ? sonosBtn.dataset.sonosUuid : null;
+        if (!sonosUuid) {
+            sonosUuid = localStorage.getItem('selectedSonosUUID');
+        }
+
+        // Build URL with optional uuid parameter
+        let url = '/sonos/group-info';
+        if (sonosUuid) {
+            url += '?uuid=' + encodeURIComponent(sonosUuid);
+        }
+
+        const response = await fetch(url);
+        if (response.ok) {
+            const data = await response.json();
+            isGroupMode = data.is_group;
+            groupSize = data.group_size || 1;
+            updateGroupVolumeUI();
+
+            if (isGroupMode) {
+                // Fetch initial group volume
+                fetchGroupVolume();
+            }
+        }
+    } catch (err) {
+        console.error('Failed to check group info:', err);
+    }
+}
+
+function updateGroupVolumeUI() {
+    const groupLabel = document.getElementById('group-label');
+    const memberContainer = document.getElementById('member-volumes-container');
+
+    if (groupLabel) {
+        if (isGroupMode && groupSize > 1) {
+            groupLabel.textContent = 'Gruppe (' + groupSize + ')';
+            groupLabel.style.display = 'inline';
+        } else {
+            groupLabel.style.display = 'none';
+        }
+    }
+
+    // Show/hide individual member volumes section
+    if (memberContainer) {
+        if (isGroupMode && groupSize > 1) {
+            memberContainer.style.display = 'block';
+        } else {
+            memberContainer.style.display = 'none';
+        }
+    }
+}
+
+async function fetchGroupVolume() {
+    try {
+        const response = await fetch('/volume/group');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.is_group && data.volume !== undefined) {
+                const slider = document.getElementById('volume-slider');
+                const valueDisplay = document.getElementById('volume-value');
+                if (slider && !volumeAdjusting) {
+                    slider.value = data.volume;
+                    valueDisplay.textContent = data.volume + '%';
+                }
+            }
+        }
+    } catch (err) {
+        console.error('Failed to fetch group volume:', err);
+    }
+}
+
+// Individual member volume functions
+let memberVolumesExpanded = false;
+let memberVolumeDebounceTimers = {};
+
+function toggleMemberVolumes() {
+    const list = document.getElementById('member-volumes-list');
+    const arrow = document.getElementById('member-arrow');
+    const toggleText = document.getElementById('member-toggle-text');
+
+    memberVolumesExpanded = !memberVolumesExpanded;
+
+    if (memberVolumesExpanded) {
+        list.style.display = 'block';
+        arrow.style.transform = 'rotate(180deg)';
+        toggleText.textContent = 'Lautsprecher ausblenden';
+        fetchMemberVolumes();
+    } else {
+        list.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+        toggleText.textContent = 'Einzelne Lautsprecher';
+    }
+}
+
+async function fetchMemberVolumes() {
+    try {
+        // Get selected device UUID from header button or localStorage
+        const sonosBtn = document.getElementById('sonos-picker-toggle');
+        let sonosUuid = sonosBtn ? sonosBtn.dataset.sonosUuid : null;
+        if (!sonosUuid) {
+            sonosUuid = localStorage.getItem('selectedSonosUUID');
+        }
+
+        // Build URL with optional uuid parameter
+        let url = '/volume/members';
+        if (sonosUuid) {
+            url += '?uuid=' + encodeURIComponent(sonosUuid);
+        }
+
+        const response = await fetch(url);
+        if (response.ok) {
+            const data = await response.json();
+            renderMemberVolumes(data.members || []);
+        }
+    } catch (err) {
+        console.error('Failed to fetch member volumes:', err);
+    }
+}
+
+function renderMemberVolumes(members) {
+    const list = document.getElementById('member-volumes-list');
+    if (!list) return;
+
+    list.innerHTML = '';
+
+    members.forEach(member => {
+        const item = document.createElement('div');
+        item.className = 'member-volume-item';
+        item.dataset.ip = member.ip;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'member-name';
+        nameSpan.textContent = member.name;
+        if (member.is_coordinator) {
+            nameSpan.innerHTML += ' <span class="coordinator-badge">Koord.</span>';
+        }
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'member-volume-slider';
+        slider.min = '0';
+        slider.max = '100';
+        slider.value = member.volume;
+        slider.oninput = () => onMemberVolumeChange(member.ip, slider.value);
+        slider.onchange = () => setMemberVolume(member.ip, slider.value);
+
+        const valueSpan = document.createElement('span');
+        valueSpan.className = 'member-volume-value';
+        valueSpan.id = 'member-volume-' + member.ip.replace(/\./g, '-');
+        valueSpan.textContent = member.volume + '%';
+
+        item.appendChild(nameSpan);
+        item.appendChild(slider);
+        item.appendChild(valueSpan);
+        list.appendChild(item);
+    });
+}
+
+function onMemberVolumeChange(ip, value) {
+    // Update display immediately
+    const valueSpan = document.getElementById('member-volume-' + ip.replace(/\./g, '-'));
+    if (valueSpan) {
+        valueSpan.textContent = value + '%';
+    }
+}
+
+function setMemberVolume(ip, value) {
+    // Debounce per member
+    clearTimeout(memberVolumeDebounceTimers[ip]);
+    memberVolumeDebounceTimers[ip] = setTimeout(() => {
+        const params = new URLSearchParams();
+        params.append('ip', ip);
+        params.append('volume', value);
+        fetch('/volume/member', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params.toString()
+        }).catch(err => {
+            console.error('Failed to set member volume:', err);
+        });
+    }, 250);
+}
 
 function onVolumeChange(value) {
     // User is adjusting - set flag to prevent status updates from overwriting
@@ -354,12 +631,16 @@ function onVolumeChange(value) {
 }
 
 function setVolume(value) {
+    // Use different endpoint for group vs individual
+    const endpoint = isGroupMode ? '/volume/group' : '/transport/volume';
+    const debounceTime = isGroupMode ? 250 : 100;
+
     // Debounce to avoid spamming the server
     clearTimeout(volumeDebounceTimer);
     volumeDebounceTimer = setTimeout(() => {
         const params = new URLSearchParams();
         params.append('volume', value);
-        fetch('/transport/volume', {
+        fetch(endpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'
@@ -371,11 +652,18 @@ function setVolume(value) {
             volumeAdjustTimeout = setTimeout(() => {
                 volumeAdjusting = false;
             }, 1500);
+
+            // If group mode and member volumes are expanded, update them
+            // (Sonos adjusts all member volumes proportionally when group volume changes)
+            if (isGroupMode && memberVolumesExpanded) {
+                // Wait a bit for Sonos to propagate the changes
+                setTimeout(fetchMemberVolumes, 300);
+            }
         }).catch(err => {
             console.error('Failed to set volume:', err);
             volumeAdjusting = false;
         });
-    }, 100);
+    }, debounceTime);
 }
 
 async function toggleMute() {
@@ -422,6 +710,223 @@ function updateVolumeUI(volume, muted) {
     }
     if (muted !== undefined) {
         updateMuteUI(muted);
+    }
+}
+
+// Group Editor functions
+let groupEditorOpen = false;
+let currentGroupCoordinatorUUID = '';
+
+function openGroupEditor() {
+    const modal = document.getElementById('group-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        groupEditorOpen = true;
+        fetchAllPlayers();
+    }
+}
+
+function closeGroupEditor() {
+    const modal = document.getElementById('group-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        groupEditorOpen = false;
+    }
+}
+
+function closeGroupEditorOnOverlay(event) {
+    if (event.target.id === 'group-modal') {
+        closeGroupEditor();
+    }
+}
+
+async function fetchAllPlayers() {
+    const currentList = document.getElementById('group-current-list');
+    const availableList = document.getElementById('group-available-list');
+
+    try {
+        // Get selected device UUID from header button or localStorage
+        const sonosBtn = document.getElementById('sonos-picker-toggle');
+        let sonosUuid = sonosBtn ? sonosBtn.dataset.sonosUuid : null;
+        if (!sonosUuid) {
+            sonosUuid = localStorage.getItem('selectedSonosUUID');
+        }
+
+        // Build URL with optional uuid parameter
+        let url = '/sonos/all-players';
+        if (sonosUuid) {
+            url += '?uuid=' + encodeURIComponent(sonosUuid);
+        }
+
+        const response = await fetch(url);
+        if (response.ok) {
+            const data = await response.json();
+            renderGroupLists(data);
+        } else {
+            currentList.innerHTML = '<div class="group-error">Fehler beim Laden</div>';
+            availableList.innerHTML = '<div class="group-error">Fehler beim Laden</div>';
+        }
+    } catch (err) {
+        console.error('Failed to fetch all players:', err);
+        currentList.innerHTML = '<div class="group-error">Fehler beim Laden</div>';
+        availableList.innerHTML = '<div class="group-error">Fehler beim Laden</div>';
+    }
+}
+
+function renderGroupLists(data) {
+    const currentList = document.getElementById('group-current-list');
+    const availableList = document.getElementById('group-available-list');
+
+    // Get the coordinator UUID from the current group
+    const currentGroup = data.players.filter(p => p.in_current_group);
+    const coordinator = currentGroup.find(p => p.is_coordinator);
+    currentGroupCoordinatorUUID = coordinator ? coordinator.uuid : '';
+
+    // Split players into current group and available
+    const inGroup = data.players.filter(p => p.in_current_group);
+    const available = data.players.filter(p => !p.in_current_group);
+
+    // Render current group
+    if (inGroup.length === 0) {
+        currentList.innerHTML = '<div class="group-empty">Keine Lautsprecher in Gruppe</div>';
+    } else {
+        currentList.innerHTML = '';
+        inGroup.forEach(player => {
+            currentList.appendChild(createPlayerItem(player, true));
+        });
+    }
+
+    // Render available players
+    if (available.length === 0) {
+        availableList.innerHTML = '<div class="group-empty">Keine weiteren Lautsprecher verfügbar</div>';
+    } else {
+        availableList.innerHTML = '';
+        available.forEach(player => {
+            availableList.appendChild(createPlayerItem(player, false));
+        });
+    }
+}
+
+function createPlayerItem(player, inGroup) {
+    const item = document.createElement('div');
+    item.className = 'group-player-item';
+    item.dataset.uuid = player.uuid;
+    item.dataset.ip = player.ip;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'group-player-name';
+    nameSpan.textContent = player.name;
+    // Only show "Koord." badge for coordinators of multi-member groups
+    if (player.is_coordinator && player.group_size > 1) {
+        nameSpan.innerHTML += ' <span class="coordinator-badge">Koord.</span>';
+    }
+
+    const button = document.createElement('button');
+    button.type = 'button';
+
+    if (inGroup) {
+        if (player.is_coordinator) {
+            // Coordinator can't leave - it would break the group
+            button.className = 'group-player-btn disabled';
+            button.disabled = true;
+            button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
+            button.title = 'Koordinator kann nicht entfernt werden';
+        } else {
+            button.className = 'group-player-btn remove';
+            button.onclick = () => removeFromGroup(player.ip);
+            button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
+            button.title = 'Aus Gruppe entfernen';
+        }
+    } else {
+        button.className = 'group-player-btn add';
+        button.onclick = () => addToGroup(player.ip);
+        button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
+        button.title = 'Zur Gruppe hinzufügen';
+    }
+
+    item.appendChild(nameSpan);
+    item.appendChild(button);
+    return item;
+}
+
+async function addToGroup(playerIP) {
+    if (!currentGroupCoordinatorUUID) {
+        console.error('No coordinator UUID');
+        return;
+    }
+
+    try {
+        const params = new URLSearchParams();
+        params.append('player_ip', playerIP);
+        params.append('coordinator_uuid', currentGroupCoordinatorUUID);
+
+        const response = await fetch('/sonos/group/join', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString()
+        });
+
+        if (response.ok) {
+            // Wait for Sonos to propagate the group change
+            setTimeout(() => {
+                // Refresh the modal lists
+                fetchAllPlayers();
+                // Update group info in main UI
+                checkGroupInfo();
+                // Update member volumes if expanded
+                if (memberVolumesExpanded) {
+                    fetchMemberVolumes();
+                }
+                // Refresh header device list (HTMX)
+                refreshHeaderDeviceList();
+            }, 500);
+        } else {
+            console.error('Failed to join group');
+        }
+    } catch (err) {
+        console.error('Failed to add to group:', err);
+    }
+}
+
+async function removeFromGroup(playerIP) {
+    try {
+        const params = new URLSearchParams();
+        params.append('player_ip', playerIP);
+
+        const response = await fetch('/sonos/group/leave', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString()
+        });
+
+        if (response.ok) {
+            // Wait for Sonos to propagate the group change
+            setTimeout(() => {
+                // Refresh the modal lists
+                fetchAllPlayers();
+                // Update group info in main UI
+                checkGroupInfo();
+                // Update member volumes if expanded
+                if (memberVolumesExpanded) {
+                    fetchMemberVolumes();
+                }
+                // Refresh header device list (HTMX)
+                refreshHeaderDeviceList();
+            }, 500);
+        } else {
+            console.error('Failed to leave group');
+        }
+    } catch (err) {
+        console.error('Failed to remove from group:', err);
+    }
+}
+
+// Refresh the header device list to update group badges
+function refreshHeaderDeviceList() {
+    const deviceList = document.getElementById('sonos-device-list');
+    if (deviceList && typeof htmx !== 'undefined') {
+        // POST to /sonos/quick-refresh to update group sizes from Sonos quickly (no SSDP discovery)
+        htmx.ajax('POST', '/sonos/quick-refresh', {target: '#sonos-device-list', swap: 'innerHTML'});
     }
 }
 </script>
@@ -788,6 +1293,285 @@ function updateVolumeUI(volume, muted) {
     color: var(--text-muted);
     min-width: 35px;
     text-align: right;
+}
+
+.group-label {
+    font-size: 0.7rem;
+    color: var(--primary);
+    background: rgba(29, 185, 84, 0.15);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+/* Individual Member Volumes */
+.member-volumes-container {
+    margin-bottom: 1rem;
+    padding: 0 1rem;
+}
+
+.member-volumes-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.4rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+}
+
+.member-volumes-toggle:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+}
+
+.member-volumes-toggle svg {
+    transition: transform 0.2s;
+}
+
+.member-volumes-list {
+    margin-top: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem;
+}
+
+.member-volume-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.member-volume-item:last-child {
+    border-bottom: none;
+}
+
+.member-name {
+    flex: 0 0 auto;
+    min-width: 80px;
+    font-size: 0.8rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.coordinator-badge {
+    font-size: 0.65rem;
+    color: var(--primary);
+    background: rgba(29, 185, 84, 0.15);
+    padding: 0.1rem 0.25rem;
+    border-radius: 3px;
+    margin-left: 0.25rem;
+}
+
+.member-volume-slider {
+    flex: 1;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bg-card);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+.member-volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+}
+
+.member-volume-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    border: none;
+}
+
+.member-volume-value {
+    flex: 0 0 auto;
+    min-width: 35px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-align: right;
+}
+
+/* Group Button */
+.group-btn {
+    margin-left: 0.5rem;
+}
+
+/* Group Editor Modal */
+.group-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1rem;
+}
+
+.group-modal {
+    background: var(--bg);
+    border-radius: 8px;
+    width: 100%;
+    max-width: 360px;
+    max-height: 80vh;
+    overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.group-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.group-modal-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text);
+}
+
+.group-modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 4px;
+    transition: color 0.2s, background-color 0.2s;
+}
+
+.group-modal-close:hover {
+    color: var(--text);
+    background: var(--bg-card);
+}
+
+.group-modal-body {
+    padding: 1rem;
+    overflow-y: auto;
+    max-height: calc(80vh - 60px);
+}
+
+.group-section {
+    margin-bottom: 1.25rem;
+}
+
+.group-section:last-child {
+    margin-bottom: 0;
+}
+
+.group-section h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.group-current-list,
+.group-available-list {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.group-loading,
+.group-error,
+.group-empty {
+    padding: 1rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.group-error {
+    color: #e57373;
+}
+
+.group-player-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.group-player-item:last-child {
+    border-bottom: none;
+}
+
+.group-player-name {
+    flex: 1;
+    font-size: 0.9rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.group-player-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background-color 0.2s, opacity 0.2s;
+}
+
+.group-player-btn.add {
+    background: rgba(29, 185, 84, 0.15);
+    color: var(--primary);
+}
+
+.group-player-btn.add:hover {
+    background: rgba(29, 185, 84, 0.3);
+}
+
+.group-player-btn.remove {
+    background: rgba(229, 115, 115, 0.15);
+    color: #e57373;
+}
+
+.group-player-btn.remove:hover {
+    background: rgba(229, 115, 115, 0.3);
+}
+
+.group-player-btn.disabled {
+    background: var(--bg-card);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    opacity: 0.5;
 }
 </style>
 {{end}}
