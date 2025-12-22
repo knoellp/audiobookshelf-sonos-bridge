@@ -3,6 +3,7 @@ package abs
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -176,6 +177,7 @@ func (c *Client) GetLibraryItems(ctx context.Context, libraryID string, opts Ite
 }
 
 // SearchLibrary searches a library for items matching the query.
+// Searches both titles and authors.
 func (c *Client) SearchLibrary(ctx context.Context, libraryID, query string, limit int) (*ItemsResponse, error) {
 	path := fmt.Sprintf("/api/libraries/%s/search?q=%s", libraryID, url.QueryEscape(query))
 	if limit > 0 {
@@ -187,10 +189,62 @@ func (c *Client) SearchLibrary(ctx context.Context, libraryID, query string, lim
 		return nil, err
 	}
 
+	// Track seen items to avoid duplicates
+	seen := make(map[string]bool)
+
 	// Convert search results to ItemsResponse format
 	items := make([]LibraryItem, 0, len(resp.Book))
 	for _, result := range resp.Book {
 		items = append(items, result.LibraryItem)
+		seen[result.LibraryItem.ID] = true
+	}
+
+	// Also fetch books from matching authors
+	for _, author := range resp.Authors {
+		if author.ID == "" {
+			continue
+		}
+		// ABS filter format requires base64-encoded value
+		encodedID := base64.StdEncoding.EncodeToString([]byte(author.ID))
+		filter := fmt.Sprintf("authors.%s", encodedID)
+		// Fetch books by this author using filter
+		authorItems, err := c.GetLibraryItems(ctx, libraryID, ItemsOptions{
+			Filter: filter,
+			Limit:  100,
+		})
+		if err != nil {
+			continue // Skip on error, don't fail the whole search
+		}
+		for _, item := range authorItems.Results {
+			if !seen[item.ID] {
+				items = append(items, item)
+				seen[item.ID] = true
+			}
+		}
+	}
+
+	// Also fetch books from matching series
+	for _, series := range resp.Series {
+		if series.Series.ID == "" {
+			continue
+		}
+		// ABS filter format requires base64-encoded value
+		encodedID := base64.StdEncoding.EncodeToString([]byte(series.Series.ID))
+		filter := fmt.Sprintf("series.%s", encodedID)
+		// Fetch books in this series using filter
+		seriesItems, err := c.GetLibraryItems(ctx, libraryID, ItemsOptions{
+			Filter: filter,
+			Limit:  100,
+		})
+		if err != nil {
+			continue
+		}
+		for _, item := range seriesItems.Results {
+			if !seen[item.ID] {
+				items = append(items, item)
+				seen[item.ID] = true
+			}
+		}
 	}
 
 	return &ItemsResponse{

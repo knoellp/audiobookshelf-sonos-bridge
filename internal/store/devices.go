@@ -14,6 +14,8 @@ type SonosDevice struct {
 	LocationURL  string
 	Model        string
 	IsReachable  bool
+	IsHidden     bool // Hidden devices (stereo pair slaves, non-coordinator group members) are not shown in UI
+	GroupSize    int  // Number of players in this device's group (1 = standalone, >1 = group coordinator)
 	DiscoveredAt time.Time
 	LastSeenAt   time.Time
 }
@@ -31,19 +33,29 @@ func NewDeviceStore(db *DB) *DeviceStore {
 // Upsert inserts or updates a Sonos device.
 func (s *DeviceStore) Upsert(device *SonosDevice) error {
 	query := `
-		INSERT INTO sonos_devices (uuid, name, ip_address, location_url, model, is_reachable, discovered_at, last_seen_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sonos_devices (uuid, name, ip_address, location_url, model, is_reachable, is_hidden, group_size, discovered_at, last_seen_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			name = excluded.name,
 			ip_address = excluded.ip_address,
 			location_url = excluded.location_url,
 			model = excluded.model,
 			is_reachable = excluded.is_reachable,
+			is_hidden = excluded.is_hidden,
+			group_size = excluded.group_size,
 			last_seen_at = excluded.last_seen_at
 	`
 	isReachable := 0
 	if device.IsReachable {
 		isReachable = 1
+	}
+	isHidden := 0
+	if device.IsHidden {
+		isHidden = 1
+	}
+	groupSize := device.GroupSize
+	if groupSize < 1 {
+		groupSize = 1
 	}
 
 	_, err := s.db.Exec(query,
@@ -53,6 +65,8 @@ func (s *DeviceStore) Upsert(device *SonosDevice) error {
 		device.LocationURL,
 		device.Model,
 		isReachable,
+		isHidden,
+		groupSize,
 		device.DiscoveredAt.Unix(),
 		device.LastSeenAt.Unix(),
 	)
@@ -62,13 +76,13 @@ func (s *DeviceStore) Upsert(device *SonosDevice) error {
 // Get retrieves a device by UUID.
 func (s *DeviceStore) Get(uuid string) (*SonosDevice, error) {
 	query := `
-		SELECT uuid, name, ip_address, location_url, model, is_reachable, discovered_at, last_seen_at
+		SELECT uuid, name, ip_address, location_url, model, is_reachable, COALESCE(is_hidden, 0), COALESCE(group_size, 1), discovered_at, last_seen_at
 		FROM sonos_devices WHERE uuid = ?
 	`
 	row := s.db.QueryRow(query, uuid)
 
 	var device SonosDevice
-	var isReachable int
+	var isReachable, isHidden, groupSize int
 	var discoveredAt, lastSeenAt int64
 
 	err := row.Scan(
@@ -78,6 +92,8 @@ func (s *DeviceStore) Get(uuid string) (*SonosDevice, error) {
 		&device.LocationURL,
 		&device.Model,
 		&isReachable,
+		&isHidden,
+		&groupSize,
 		&discoveredAt,
 		&lastSeenAt,
 	)
@@ -89,17 +105,19 @@ func (s *DeviceStore) Get(uuid string) (*SonosDevice, error) {
 	}
 
 	device.IsReachable = isReachable == 1
+	device.IsHidden = isHidden == 1
+	device.GroupSize = groupSize
 	device.DiscoveredAt = time.Unix(discoveredAt, 0)
 	device.LastSeenAt = time.Unix(lastSeenAt, 0)
 
 	return &device, nil
 }
 
-// List returns all Sonos devices.
+// List returns all visible Sonos devices (excludes hidden devices like stereo pair slaves).
 func (s *DeviceStore) List() ([]*SonosDevice, error) {
 	query := `
-		SELECT uuid, name, ip_address, location_url, model, is_reachable, discovered_at, last_seen_at
-		FROM sonos_devices ORDER BY name
+		SELECT uuid, name, ip_address, location_url, model, is_reachable, COALESCE(is_hidden, 0), COALESCE(group_size, 1), discovered_at, last_seen_at
+		FROM sonos_devices WHERE COALESCE(is_hidden, 0) = 0 ORDER BY name
 	`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -110,7 +128,7 @@ func (s *DeviceStore) List() ([]*SonosDevice, error) {
 	var devices []*SonosDevice
 	for rows.Next() {
 		var device SonosDevice
-		var isReachable int
+		var isReachable, isHidden, groupSize int
 		var discoveredAt, lastSeenAt int64
 
 		err := rows.Scan(
@@ -120,6 +138,8 @@ func (s *DeviceStore) List() ([]*SonosDevice, error) {
 			&device.LocationURL,
 			&device.Model,
 			&isReachable,
+			&isHidden,
+			&groupSize,
 			&discoveredAt,
 			&lastSeenAt,
 		)
@@ -128,6 +148,8 @@ func (s *DeviceStore) List() ([]*SonosDevice, error) {
 		}
 
 		device.IsReachable = isReachable == 1
+		device.IsHidden = isHidden == 1
+		device.GroupSize = groupSize
 		device.DiscoveredAt = time.Unix(discoveredAt, 0)
 		device.LastSeenAt = time.Unix(lastSeenAt, 0)
 		devices = append(devices, &device)
@@ -136,11 +158,11 @@ func (s *DeviceStore) List() ([]*SonosDevice, error) {
 	return devices, rows.Err()
 }
 
-// ListReachable returns only reachable Sonos devices.
+// ListReachable returns only reachable and visible Sonos devices.
 func (s *DeviceStore) ListReachable() ([]*SonosDevice, error) {
 	query := `
-		SELECT uuid, name, ip_address, location_url, model, is_reachable, discovered_at, last_seen_at
-		FROM sonos_devices WHERE is_reachable = 1 ORDER BY name
+		SELECT uuid, name, ip_address, location_url, model, is_reachable, COALESCE(is_hidden, 0), COALESCE(group_size, 1), discovered_at, last_seen_at
+		FROM sonos_devices WHERE is_reachable = 1 AND COALESCE(is_hidden, 0) = 0 ORDER BY name
 	`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -151,7 +173,7 @@ func (s *DeviceStore) ListReachable() ([]*SonosDevice, error) {
 	var devices []*SonosDevice
 	for rows.Next() {
 		var device SonosDevice
-		var isReachable int
+		var isReachable, isHidden, groupSize int
 		var discoveredAt, lastSeenAt int64
 
 		err := rows.Scan(
@@ -161,6 +183,8 @@ func (s *DeviceStore) ListReachable() ([]*SonosDevice, error) {
 			&device.LocationURL,
 			&device.Model,
 			&isReachable,
+			&isHidden,
+			&groupSize,
 			&discoveredAt,
 			&lastSeenAt,
 		)
@@ -169,6 +193,8 @@ func (s *DeviceStore) ListReachable() ([]*SonosDevice, error) {
 		}
 
 		device.IsReachable = isReachable == 1
+		device.IsHidden = isHidden == 1
+		device.GroupSize = groupSize
 		device.DiscoveredAt = time.Unix(discoveredAt, 0)
 		device.LastSeenAt = time.Unix(lastSeenAt, 0)
 		devices = append(devices, &device)

@@ -37,7 +37,7 @@
                         <circle cx="12" cy="12" r="10"></circle>
                         <polyline points="12 6 12 12 16 14"></polyline>
                     </svg>
-                    {{formatDuration .Item.DurationSec}}
+                    {{formatDuration .Item.DurationSec}}{{if gt .Item.ProgressPct 0}} · {{.Item.ProgressPct}}% · {{formatDuration (mult .Item.RemainingMin 60)}} verbleibend{{end}}
                 </span>
                 <span class="meta-item cache-status-meta" id="cache-status-container">
                     <span id="cache-status-badge"></span>
@@ -85,11 +85,12 @@ async function checkCacheStatus() {
         const badge = document.getElementById('cache-status-badge');
         const text = document.getElementById('cache-status-text');
 
-        if (html.includes('cached')) {
+        // Check for specific class to avoid "Not cached" matching "cached"
+        if (html.includes('cache-badge cached')) {
             cacheStatus = 'ready';
             badge.className = 'status-dot status-cached';
             text.textContent = 'Ready to play';
-        } else if (html.includes('in_progress')) {
+        } else if (html.includes('cache-badge in_progress')) {
             cacheStatus = 'in_progress';
             badge.className = 'status-dot status-progress';
             text.textContent = 'Transcoding...';

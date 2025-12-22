@@ -10,6 +10,7 @@ type Device struct {
 	LocationURL string
 	Model       string
 	IsReachable bool
+	GroupSize   int // Number of visible players in this device's group (1 = standalone, >1 = grouped)
 }
 
 // DeviceDescription represents the UPnP device description XML response.
@@ -93,3 +94,54 @@ const (
 	SSDPMulticastAddr = "239.255.255.250:1900"
 	SSDPSearchTarget  = "urn:schemas-upnp-org:device:ZonePlayer:1"
 )
+
+// ZoneGroupTopology service constants.
+const (
+	ZoneGroupTopologyServicePath = "/ZoneGroupTopology/Control"
+	ZoneGroupTopologyNamespace   = "urn:schemas-upnp-org:service:ZoneGroupTopology:1"
+)
+
+// ZoneGroupState represents the parsed zone group topology.
+type ZoneGroupState struct {
+	ZoneGroups []ZoneGroup
+}
+
+// ZoneGroup represents a group of Sonos devices.
+type ZoneGroup struct {
+	Coordinator string            // UUID of the coordinator
+	Members     []ZoneGroupMember // Members in this group
+}
+
+// ZoneGroupMember represents a single device in a zone group.
+type ZoneGroupMember struct {
+	UUID      string // RINCON_XXX format
+	ZoneName  string // Room name
+	Invisible bool   // True if this is a stereo pair slave
+}
+
+// ZoneGroupStateWrapperXML is the outer wrapper after unescaping.
+// The structure is: <ZoneGroupState><ZoneGroups>...</ZoneGroups></ZoneGroupState>
+type ZoneGroupStateWrapperXML struct {
+	XMLName    xml.Name       `xml:"ZoneGroupState"`
+	ZoneGroups []ZoneGroupXML `xml:"ZoneGroups>ZoneGroup"`
+}
+
+// ZoneGroupsXML is the inner XML structure (for direct parsing if needed).
+type ZoneGroupsXML struct {
+	XMLName    xml.Name       `xml:"ZoneGroups"`
+	ZoneGroups []ZoneGroupXML `xml:"ZoneGroup"`
+}
+
+// ZoneGroupXML represents a zone group in the XML.
+type ZoneGroupXML struct {
+	Coordinator string               `xml:"Coordinator,attr"`
+	ID          string               `xml:"ID,attr"`
+	Members     []ZoneGroupMemberXML `xml:"ZoneGroupMember"`
+}
+
+// ZoneGroupMemberXML represents a zone group member in the XML.
+type ZoneGroupMemberXML struct {
+	UUID      string `xml:"UUID,attr"`
+	ZoneName  string `xml:"ZoneName,attr"`
+	Invisible string `xml:"Invisible,attr"` // "0" or "1"
+}
