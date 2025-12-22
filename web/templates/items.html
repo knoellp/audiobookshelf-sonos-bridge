@@ -34,8 +34,10 @@
                 <option value="title-desc" {{if eq .Sort "title-desc"}}selected{{end}}>Title Z-A</option>
                 <option value="author-asc" {{if eq .Sort "author-asc"}}selected{{end}}>Author A-Z</option>
                 <option value="author-desc" {{if eq .Sort "author-desc"}}selected{{end}}>Author Z-A</option>
+                <option value="published-desc" {{if eq .Sort "published-desc"}}selected{{end}}>Newest Published</option>
+                <option value="published-asc" {{if eq .Sort "published-asc"}}selected{{end}}>Oldest Published</option>
                 <option value="added-desc" {{if eq .Sort "added-desc"}}selected{{end}}>Recently Added</option>
-                <option value="added-asc" {{if eq .Sort "added-asc"}}selected{{end}}>Oldest First</option>
+                <option value="added-asc" {{if eq .Sort "added-asc"}}selected{{end}}>Oldest Added</option>
                 <option value="recent-desc" {{if eq .Sort "recent-desc"}}selected{{end}}>Recently Played</option>
                 <option value="duration-asc" {{if eq .Sort "duration-asc"}}selected{{end}}>Duration (Short)</option>
                 <option value="duration-desc" {{if eq .Sort "duration-desc"}}selected{{end}}>Duration (Long)</option>

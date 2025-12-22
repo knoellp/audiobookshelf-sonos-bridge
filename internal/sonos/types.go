@@ -117,6 +117,8 @@ type ZoneGroupMember struct {
 	UUID      string // RINCON_XXX format
 	ZoneName  string // Room name
 	Invisible bool   // True if this is a stereo pair slave
+	Location  string // e.g., "http://192.168.1.40:1400/xml/device_description.xml"
+	IPAddress string // Extracted from Location
 }
 
 // ZoneGroupStateWrapperXML is the outer wrapper after unescaping.
@@ -144,4 +146,13 @@ type ZoneGroupMemberXML struct {
 	UUID      string `xml:"UUID,attr"`
 	ZoneName  string `xml:"ZoneName,attr"`
 	Invisible string `xml:"Invisible,attr"` // "0" or "1"
+	Location  string `xml:"Location,attr"`  // e.g., "http://192.168.1.40:1400/xml/device_description.xml"
+}
+
+// CoordinatorInfo contains information about a group's coordinator.
+type CoordinatorInfo struct {
+	CoordinatorUUID string // UUID of the coordinator
+	CoordinatorIP   string // IP address of the coordinator
+	GroupSize       int    // Number of visible members in the group
+	IsCoordinator   bool   // True if the queried device is the coordinator
 }

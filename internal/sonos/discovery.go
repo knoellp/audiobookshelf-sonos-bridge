@@ -331,3 +331,66 @@ func (d *Discovery) GetReachableDevices() ([]*store.SonosDevice, error) {
 func (d *Discovery) GetDevice(uuid string) (*store.SonosDevice, error) {
 	return d.deviceStore.Get(uuid)
 }
+
+// RefreshGroupInfo queries ZoneGroupTopology and updates group sizes in the store.
+// This is much faster than a full SSDP discovery (typically <100ms vs 5 seconds).
+func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
+	devices, err := d.deviceStore.List()
+	if err != nil {
+		return fmt.Errorf("failed to list devices: %w", err)
+	}
+
+	if len(devices) == 0 {
+		return nil
+	}
+
+	// Query ZoneGroupTopology from any reachable device
+	var zoneState *ZoneGroupState
+	for _, device := range devices {
+		if !device.IsReachable {
+			continue
+		}
+		topology := NewZoneGroupTopology(device.IPAddress)
+		state, err := topology.GetZoneGroupState(ctx)
+		if err == nil {
+			zoneState = state
+			break
+		}
+	}
+
+	if zoneState == nil {
+		return fmt.Errorf("could not query zone group state from any device")
+	}
+
+	// Get updated group info
+	groupInfo := zoneState.GetGroupInfo()
+	invisibleUUIDs := zoneState.GetInvisibleUUIDs()
+
+	// Update each device in the store with current group info
+	for _, device := range devices {
+		normalizedUUID := NormalizeUUID(device.UUID)
+
+		// Check if invisible (stereo pair slave)
+		isHidden := invisibleUUIDs[normalizedUUID]
+		groupSize := 1
+
+		if info, hasInfo := groupInfo[normalizedUUID]; hasInfo {
+			groupSize = info.GroupSize
+			// Hide non-coordinator group members
+			if info.GroupSize > 1 && !info.IsCoordinator {
+				isHidden = true
+			}
+		}
+
+		// Only update if something changed
+		if device.GroupSize != groupSize || device.IsHidden != isHidden {
+			device.GroupSize = groupSize
+			device.IsHidden = isHidden
+			if err := d.deviceStore.Upsert(device); err != nil {
+				slog.Warn("failed to update device group info", "uuid", device.UUID, "error", err)
+			}
+		}
+	}
+
+	return nil
+}
