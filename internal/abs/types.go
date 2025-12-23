@@ -1,6 +1,9 @@
 package abs
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // LoginRequest represents the login request body.
 type LoginRequest struct {
@@ -80,20 +83,49 @@ type BookMedia struct {
 
 // BookMetadata contains metadata about a book.
 type BookMetadata struct {
-	Title           string   `json:"title"`
-	Subtitle        string   `json:"subtitle"`
-	Authors         []Author `json:"authors"`
-	Narrators       []string `json:"narrators"`
-	Series          []Series `json:"series"`
-	Genres          []string `json:"genres"`
-	PublishedYear   string   `json:"publishedYear"`
-	PublishedDate   string   `json:"publishedDate"`
-	Publisher       string   `json:"publisher"`
-	Description     string   `json:"description"`
-	ISBN            string   `json:"isbn"`
-	ASIN            string   `json:"asin"`
-	Language        string   `json:"language"`
-	Explicit        bool     `json:"explicit"`
+	Title           string      `json:"title"`
+	Subtitle        string      `json:"subtitle"`
+	Authors         []Author    `json:"authors"`
+	Narrators       []string    `json:"narrators"`
+	Series          SeriesList  `json:"series"`
+	Genres          []string    `json:"genres"`
+	PublishedYear   string      `json:"publishedYear"`
+	PublishedDate   string      `json:"publishedDate"`
+	Publisher       string      `json:"publisher"`
+	Description     string      `json:"description"`
+	ISBN            string      `json:"isbn"`
+	ASIN            string      `json:"asin"`
+	Language        string      `json:"language"`
+	Explicit        bool        `json:"explicit"`
+}
+
+// SeriesList handles the ABS API returning series as either an array or single object.
+// When filtering by series, ABS returns series as a single object instead of an array.
+type SeriesList []Series
+
+// UnmarshalJSON handles both array and object formats for series.
+func (s *SeriesList) UnmarshalJSON(data []byte) error {
+	// Try array first
+	var arr []Series
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*s = arr
+		return nil
+	}
+
+	// Try single object
+	var single Series
+	if err := json.Unmarshal(data, &single); err == nil {
+		if single.ID != "" || single.Name != "" {
+			*s = []Series{single}
+		} else {
+			*s = []Series{}
+		}
+		return nil
+	}
+
+	// Default to empty
+	*s = []Series{}
+	return nil
 }
 
 // Author represents an author.
@@ -226,6 +258,19 @@ type FilterAuthor struct {
 type FilterSeries struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+// ItemsInProgressResponse represents the response from /api/me/items-in-progress.
+type ItemsInProgressResponse struct {
+	LibraryItems []ItemInProgress `json:"libraryItems"`
+}
+
+// ItemInProgress represents an item that the user has started but not finished.
+type ItemInProgress struct {
+	ID          string    `json:"id"`
+	LibraryID   string    `json:"libraryId"`
+	Media       BookMedia `json:"media"`
+	ProgressLastUpdate int64 `json:"progressLastUpdate"`
 }
 
 // Progress represents playback progress for an item.

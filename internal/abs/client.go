@@ -277,6 +277,20 @@ func (c *Client) GetItem(ctx context.Context, itemID string) (*LibraryItem, erro
 	return &resp, nil
 }
 
+// GetItemsInProgress returns items that the user has started but not finished.
+func (c *Client) GetItemsInProgress(ctx context.Context, limit int) ([]ItemInProgress, error) {
+	path := "/api/me/items-in-progress"
+	if limit > 0 {
+		path += fmt.Sprintf("?limit=%d", limit)
+	}
+
+	var resp ItemsInProgressResponse
+	if err := c.get(ctx, path, &resp); err != nil {
+		return nil, err
+	}
+	return resp.LibraryItems, nil
+}
+
 // GetProgress returns the playback progress for an item.
 func (c *Client) GetProgress(ctx context.Context, itemID string) (*Progress, error) {
 	path := fmt.Sprintf("/api/me/progress/%s", itemID)
