@@ -103,19 +103,21 @@
     </div>
 
     <div class="volume-controls">
-        <button type="button" class="volume-btn" id="mute-btn" onclick="toggleMute()" title="Mute/Unmute">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="volume-icon">
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
-                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-            </svg>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="mute-icon" style="display:none">
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                <line x1="23" y1="9" x2="17" y2="15"></line>
-                <line x1="17" y1="9" x2="23" y2="15"></line>
-            </svg>
-        </button>
-        <span class="group-label" id="group-label" style="display:none">Gruppe</span>
+        <div class="volume-mute-wrapper">
+            <button type="button" class="volume-btn" id="mute-btn" onclick="toggleMute()" title="Mute/Unmute">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="volume-icon">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="mute-icon" style="display:none">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                    <line x1="23" y1="9" x2="17" y2="15"></line>
+                    <line x1="17" y1="9" x2="23" y2="15"></line>
+                </svg>
+            </button>
+            <span class="group-label" id="group-label" style="display:none">Gruppe</span>
+        </div>
         <button type="button" class="volume-adjust-btn" onclick="adjustVolume(-1)" title="Leiser">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -622,6 +624,8 @@ function renderMemberVolumes(members) {
 }
 
 function onMemberVolumeChange(ip, value) {
+    // Pause polling during interaction
+    if (typeof markUserInteraction === 'function') markUserInteraction();
     // Update display immediately
     const valueSpan = document.getElementById('member-volume-' + ip.replace(/\./g, '-'));
     if (valueSpan) {
@@ -630,6 +634,8 @@ function onMemberVolumeChange(ip, value) {
 }
 
 function setMemberVolume(ip, value) {
+    // Pause polling during interaction
+    if (typeof markUserInteraction === 'function') markUserInteraction();
     // Debounce per member
     clearTimeout(memberVolumeDebounceTimers[ip]);
     memberVolumeDebounceTimers[ip] = setTimeout(() => {
@@ -649,6 +655,8 @@ function setMemberVolume(ip, value) {
 }
 
 function onVolumeChange(value) {
+    // Pause polling during interaction
+    if (typeof markUserInteraction === 'function') markUserInteraction();
     // User is adjusting - set flag to prevent status updates from overwriting
     volumeAdjusting = true;
     clearTimeout(volumeAdjustTimeout);
@@ -657,6 +665,8 @@ function onVolumeChange(value) {
 }
 
 function setVolume(value) {
+    // Pause polling during interaction
+    if (typeof markUserInteraction === 'function') markUserInteraction();
     // Use different endpoint for group vs individual
     const endpoint = isGroupMode ? '/volume/group' : '/transport/volume';
     const debounceTime = isGroupMode ? 250 : 100;
@@ -692,39 +702,52 @@ function setVolume(value) {
     }, debounceTime);
 }
 
+// Track pending volume adjustments to handle rapid clicks
+let pendingVolumeDelta = 0;
+let volumeAdjustInFlight = false;
+let volumeSyncInFlight = false;
+let lastConfirmedVolume = null;  // Last volume confirmed by server
+
 async function adjustVolume(delta) {
+    // Pause polling during interaction
+    if (typeof markUserInteraction === 'function') markUserInteraction();
+
     const slider = document.getElementById('volume-slider');
     const valueDisplay = document.getElementById('volume-value');
 
     if (isGroupMode) {
-        // For groups, use the relative adjust endpoint to avoid sync issues
-        try {
-            volumeAdjusting = true;
-            const params = new URLSearchParams();
-            params.append('delta', delta);
-            const response = await fetch('/volume/group/adjust', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: params.toString()
-            });
-            if (response.ok) {
-                const data = await response.json();
-                slider.value = data.volume;
-                valueDisplay.textContent = data.volume + '%';
-                // Update member volumes if expanded
-                if (memberVolumesExpanded) {
-                    setTimeout(fetchMemberVolumes, 300);
-                }
-            }
-            // Reset flag after delay
-            clearTimeout(volumeAdjustTimeout);
-            volumeAdjustTimeout = setTimeout(() => {
-                volumeAdjusting = false;
-            }, 1500);
-        } catch (err) {
-            console.error('Failed to adjust group volume:', err);
-            volumeAdjusting = false;
+        // Accumulate delta for rapid clicks
+        pendingVolumeDelta += delta;
+
+        // Show pending state visually
+        slider.classList.add('adjusting');
+
+        // If a request is already in flight, just accumulate delta
+        if (volumeAdjustInFlight || volumeSyncInFlight) {
+            return;
         }
+
+        // On first interaction, sync with real Sonos value first
+        if (lastConfirmedVolume === null) {
+            volumeSyncInFlight = true;
+            try {
+                const response = await fetch('/volume/group');
+                if (response.ok) {
+                    const data = await response.json();
+                    lastConfirmedVolume = data.volume;
+                    // Sync UI to real value before applying delta
+                    slider.value = lastConfirmedVolume;
+                    valueDisplay.textContent = lastConfirmedVolume + '%';
+                }
+            } catch (err) {
+                console.error('Failed to sync volume:', err);
+            } finally {
+                volumeSyncInFlight = false;
+            }
+        }
+
+        // Process pending adjustments
+        await processVolumeAdjustments();
     } else {
         // For single devices, use the local slider value
         let newValue = parseInt(slider.value) + delta;
@@ -732,6 +755,67 @@ async function adjustVolume(delta) {
         slider.value = newValue;
         onVolumeChange(newValue);
         setVolume(newValue);
+    }
+}
+
+async function processVolumeAdjustments() {
+    if (volumeAdjustInFlight || pendingVolumeDelta === 0) {
+        return;
+    }
+
+    volumeAdjustInFlight = true;
+    volumeAdjusting = true;
+
+    const slider = document.getElementById('volume-slider');
+    const valueDisplay = document.getElementById('volume-value');
+
+    try {
+        // Take the current pending delta and reset
+        const deltaToSend = pendingVolumeDelta;
+        pendingVolumeDelta = 0;
+
+        const params = new URLSearchParams();
+        params.append('delta', deltaToSend);
+        const response = await fetch('/volume/group/adjust', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString()
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            // Always update from server response - this is the source of truth
+            lastConfirmedVolume = data.volume;
+
+            // Calculate display value including any new pending delta
+            let displayValue = lastConfirmedVolume + pendingVolumeDelta;
+            displayValue = Math.max(0, Math.min(100, displayValue));
+            slider.value = displayValue;
+            valueDisplay.textContent = displayValue + '%';
+
+            // Update member volumes if expanded
+            if (memberVolumesExpanded) {
+                setTimeout(fetchMemberVolumes, 300);
+            }
+        }
+    } catch (err) {
+        console.error('Failed to adjust group volume:', err);
+    } finally {
+        volumeAdjustInFlight = false;
+        slider.classList.remove('adjusting');
+
+        // If more delta accumulated while we were fetching, process it
+        if (pendingVolumeDelta !== 0) {
+            // Small delay to let Sonos propagate the previous change
+            setTimeout(processVolumeAdjustments, 150);
+        } else {
+            // Reset flag after delay
+            clearTimeout(volumeAdjustTimeout);
+            volumeAdjustTimeout = setTimeout(() => {
+                volumeAdjusting = false;
+                lastConfirmedVolume = null;  // Reset for next interaction
+            }, 1500);
+        }
     }
 }
 
@@ -1238,6 +1322,8 @@ function refreshHeaderDeviceList() {
     padding: 0.5rem;
     border-radius: 50%;
     transition: background-color 0.2s, transform 0.1s;
+    touch-action: manipulation; /* Prevent double-tap zoom */
+    -webkit-tap-highlight-color: transparent;
 }
 
 .transport-btn:hover {
@@ -1284,6 +1370,8 @@ function refreshHeaderDeviceList() {
     cursor: pointer;
     font-size: 0.875rem;
     transition: background-color 0.2s, color 0.2s;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .transport-btn-secondary:hover {
@@ -1300,6 +1388,14 @@ function refreshHeaderDeviceList() {
     padding: 0 1rem;
 }
 
+.volume-mute-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+    flex-shrink: 0;
+}
+
 .volume-btn {
     display: inline-flex;
     align-items: center;
@@ -1311,6 +1407,7 @@ function refreshHeaderDeviceList() {
     padding: 0.25rem;
     border-radius: 4px;
     transition: color 0.2s;
+    touch-action: manipulation; /* Prevent double-tap zoom */
 }
 
 .volume-btn:hover {
@@ -1329,6 +1426,8 @@ function refreshHeaderDeviceList() {
     border-radius: 4px;
     transition: background-color 0.2s, color 0.2s, border-color 0.2s;
     flex-shrink: 0;
+    touch-action: manipulation; /* Prevent double-tap zoom */
+    -webkit-tap-highlight-color: transparent; /* Remove tap highlight on iOS */
 }
 
 .volume-adjust-btn:hover {
@@ -1387,13 +1486,14 @@ function refreshHeaderDeviceList() {
 }
 
 .group-label {
-    font-size: 0.7rem;
+    font-size: 0.6rem;
     color: var(--primary);
     background: rgba(29, 185, 84, 0.15);
-    padding: 0.15rem 0.4rem;
-    border-radius: 4px;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
     white-space: nowrap;
     font-weight: 500;
+    line-height: 1;
 }
 
 /* Individual Member Volumes */

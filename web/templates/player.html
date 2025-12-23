@@ -91,9 +91,14 @@ async function updateStatus() {
                 pauseBtn.style.display = 'none';
             }
 
-            // Update volume controls
+            // Update volume controls (skip if user recently interacted to avoid race conditions)
             if (typeof updateVolumeUI === 'function') {
-                updateVolumeUI(data.volume, data.muted);
+                const shouldUpdateVolume = typeof lastUserInteraction === 'undefined' ||
+                    typeof INTERACTION_PAUSE_MS === 'undefined' ||
+                    (Date.now() - lastUserInteraction >= INTERACTION_PAUSE_MS);
+                if (shouldUpdateVolume) {
+                    updateVolumeUI(data.volume, data.muted);
+                }
             }
 
             // Update current chapter display
