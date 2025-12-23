@@ -692,14 +692,47 @@ function setVolume(value) {
     }, debounceTime);
 }
 
-function adjustVolume(delta) {
+async function adjustVolume(delta) {
     const slider = document.getElementById('volume-slider');
-    let newValue = parseInt(slider.value) + delta;
-    // Clamp to 0-100
-    newValue = Math.max(0, Math.min(100, newValue));
-    slider.value = newValue;
-    onVolumeChange(newValue);
-    setVolume(newValue);
+    const valueDisplay = document.getElementById('volume-value');
+
+    if (isGroupMode) {
+        // For groups, use the relative adjust endpoint to avoid sync issues
+        try {
+            volumeAdjusting = true;
+            const params = new URLSearchParams();
+            params.append('delta', delta);
+            const response = await fetch('/volume/group/adjust', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: params.toString()
+            });
+            if (response.ok) {
+                const data = await response.json();
+                slider.value = data.volume;
+                valueDisplay.textContent = data.volume + '%';
+                // Update member volumes if expanded
+                if (memberVolumesExpanded) {
+                    setTimeout(fetchMemberVolumes, 300);
+                }
+            }
+            // Reset flag after delay
+            clearTimeout(volumeAdjustTimeout);
+            volumeAdjustTimeout = setTimeout(() => {
+                volumeAdjusting = false;
+            }, 1500);
+        } catch (err) {
+            console.error('Failed to adjust group volume:', err);
+            volumeAdjusting = false;
+        }
+    } else {
+        // For single devices, use the local slider value
+        let newValue = parseInt(slider.value) + delta;
+        newValue = Math.max(0, Math.min(100, newValue));
+        slider.value = newValue;
+        onVolumeChange(newValue);
+        setVolume(newValue);
+    }
 }
 
 async function toggleMute() {
