@@ -243,6 +243,7 @@ func main() {
 	mux.Handle("GET /sonos/group-info", auth(playerHandler.HandleGetGroupInfo))
 	mux.Handle("GET /volume/group", auth(playerHandler.HandleGetGroupVolume))
 	mux.Handle("POST /volume/group", auth(playerHandler.HandleSetGroupVolume))
+	mux.Handle("POST /volume/group/adjust", auth(playerHandler.HandleAdjustGroupVolume))
 
 	// Individual member volume routes (protected)
 	mux.Handle("GET /volume/members", auth(playerHandler.HandleGetMemberVolumes))
