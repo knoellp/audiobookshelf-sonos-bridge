@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -210,4 +211,69 @@ type DeviceResponse struct {
 	Model       string `json:"model"`
 	IsReachable bool   `json:"is_reachable"`
 	GroupSize   int    `json:"group_size"` // Number of players in this group (>1 for grouped coordinator)
+}
+
+// GroupPollResponse is the response for the group polling endpoint.
+type GroupPollResponse struct {
+	Devices []GroupPollDevice `json:"devices"`
+}
+
+// GroupPollDevice is a minimal device info for group polling.
+type GroupPollDevice struct {
+	UUID      string `json:"uuid"`
+	Name      string `json:"name"`
+	GroupSize int    `json:"group_size"`
+	IsHidden  bool   `json:"is_hidden"`
+}
+
+// HandlePollGroups polls Sonos for group changes and returns current state as JSON.
+// This endpoint is designed to be called frequently (every 10 seconds) by the frontend.
+func (h *SonosHandler) HandlePollGroups(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	// Refresh group info from Sonos
+	if err := h.discovery.RefreshGroupInfo(ctx); err != nil {
+		slog.Debug("HandlePollGroups: RefreshGroupInfo failed", "error", err)
+		// Continue anyway - return cached data
+	}
+
+	// Get current devices from store
+	devices, err := h.discovery.GetDevices()
+	if err != nil {
+		http.Error(w, "Failed to get devices", http.StatusInternalServerError)
+		return
+	}
+
+	// Build response with minimal data needed for change detection
+	response := GroupPollResponse{
+		Devices: make([]GroupPollDevice, 0, len(devices)),
+	}
+
+	for _, d := range devices {
+		groupSize := d.GroupSize
+		if groupSize == 0 {
+			groupSize = 1
+		}
+		response.Devices = append(response.Devices, GroupPollDevice{
+			UUID:      d.UUID,
+			Name:      d.Name,
+			GroupSize: groupSize,
+			IsHidden:  d.IsHidden,
+		})
+	}
+
+	// Sort by name for consistent comparison
+	sort.Slice(response.Devices, func(i, j int) bool {
+		return response.Devices[i].Name < response.Devices[j].Name
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
