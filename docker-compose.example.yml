@@ -40,13 +40,12 @@ services:
       # Verwende die IP-Adresse deines Servers, NICHT localhost
       - BRIDGE_PUBLIC_URL=http://192.168.1.100:8080
 
-      # Geheimer Schlüssel für Session-Verschlüsselung
-      # Generiere einen mit: openssl rand -hex 32
-      - BRIDGE_SESSION_SECRET=HIER-MINDESTENS-32-ZEICHEN-EINFUEGEN
-
       # ══════════════════════════════════════════════════════════
       # OPTIONAL - Standardwerte funktionieren meistens
       # ══════════════════════════════════════════════════════════
+
+      # Session-Verschlüsselung (wird automatisch generiert wenn nicht gesetzt)
+      #- BRIDGE_SESSION_SECRET=optional-eigener-schluessel
 
       # Zeitzone
       - TZ=Europe/Berlin

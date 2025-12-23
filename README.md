@@ -29,7 +29,6 @@ docker run -d \
   --network host \
   -e BRIDGE_ABS_URL=http://your-audiobookshelf-server:13378 \
   -e BRIDGE_PUBLIC_URL=http://your-host-ip:8080 \
-  -e BRIDGE_SESSION_SECRET=$(openssl rand -hex 32) \
   -v /path/to/media:/media:ro \
   -v /path/to/cache:/cache \
   -v /path/to/config:/config \
@@ -37,6 +36,32 @@ docker run -d \
 ```
 
 ### Using Docker Compose
+
+<details>
+<summary><strong>Portainer / Copy-Paste Stack</strong></summary>
+
+```yaml
+version: '3.8'
+
+services:
+  abs-sonos-bridge:
+    image: ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest
+    container_name: abs-sonos-bridge
+    network_mode: host
+    environment:
+      BRIDGE_ABS_URL: http://your-audiobookshelf-server:13378
+      BRIDGE_PUBLIC_URL: http://your-host-ip:8080
+    volumes:
+      - /path/to/media:/media:ro
+      - /path/to/cache:/cache
+      - /path/to/config:/config
+    restart: unless-stopped
+```
+
+</details>
+
+<details>
+<summary><strong>Using docker-compose.yml file</strong></summary>
 
 1. Download the example compose file:
 ```bash
@@ -47,7 +72,6 @@ mv docker-compose.example.yml docker-compose.yml
 2. Edit `docker-compose.yml` with your settings:
    - `BRIDGE_ABS_URL`: Your Audiobookshelf server URL
    - `BRIDGE_PUBLIC_URL`: This server's IP (must be accessible from Sonos)
-   - `BRIDGE_SESSION_SECRET`: Generate with `openssl rand -hex 32`
    - Volume path for `/media`: Same path as Audiobookshelf uses
 
 3. Start the service:
@@ -56,6 +80,8 @@ docker compose up -d
 ```
 
 4. Open `http://your-server-ip:8080` in your browser
+
+</details>
 
 ### Building from Source
 
@@ -70,7 +96,6 @@ go build -o bridge ./cmd/bridge
 # Run
 BRIDGE_ABS_URL=http://localhost:13378 \
 BRIDGE_PUBLIC_URL=http://localhost:8080 \
-BRIDGE_SESSION_SECRET=dev-secret-at-least-32-characters \
 ./bridge
 ```
 
@@ -80,7 +105,7 @@ BRIDGE_SESSION_SECRET=dev-secret-at-least-32-characters \
 |---------------------|-------------|---------|
 | `BRIDGE_ABS_URL` | Audiobookshelf server URL | **Required** |
 | `BRIDGE_PUBLIC_URL` | Public URL for this service (must be accessible from Sonos) | **Required** |
-| `BRIDGE_SESSION_SECRET` | Secret for session encryption (min 32 chars) | **Required** |
+| `BRIDGE_SESSION_SECRET` | Secret for session encryption (min 32 chars) | Auto-generated |
 | `BRIDGE_PORT` | HTTP server port | `8080` |
 | `BRIDGE_MEDIA_DIR` | Path to media files inside container | `/media` |
 | `BRIDGE_CACHE_DIR` | Directory for transcoded audio cache | `/cache` |
