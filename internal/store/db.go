@@ -192,6 +192,23 @@ func (db *DB) runIncrementalMigrations() error {
 		}
 	}
 
+	// Add sleep_at column to playback_sessions if not exists
+	// Stores Unix timestamp when sleep timer should trigger (NULL = no timer)
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('playback_sessions') WHERE name = 'sleep_at'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check sleep_at column: %w", err)
+	}
+
+	if count == 0 {
+		slog.Info("migrating playback_sessions: adding sleep_at column")
+		_, err := db.conn.Exec(`ALTER TABLE playback_sessions ADD COLUMN sleep_at INTEGER DEFAULT NULL`)
+		if err != nil {
+			return fmt.Errorf("failed to add sleep_at column: %w", err)
+		}
+	}
+
 	return nil
 }
 

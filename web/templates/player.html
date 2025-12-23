@@ -105,6 +105,11 @@ async function updateStatus() {
             if (typeof updateCurrentChapterDisplay === 'function') {
                 updateCurrentChapterDisplay(data.position_sec);
             }
+
+            // Update sleep timer from server
+            if (typeof updateSleepTimerFromStatus === 'function') {
+                updateSleepTimerFromStatus(data.sleep_timer_remaining_sec);
+            }
         } else {
             // No active playback for this item - show play button
             if (playBtn && pauseBtn) {
