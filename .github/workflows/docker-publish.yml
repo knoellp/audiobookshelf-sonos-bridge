@@ -74,8 +74,62 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Generate Release Notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: notes
+        run: |
+          # Find previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            # No previous tag - use first commit
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          echo "Generating release notes from $PREV_TAG to HEAD"
+
+          {
+            echo "notes<<EOF"
+            echo "## What's Changed"
+            echo ""
+
+            # Features (Add ...)
+            FEATURES=$(git log --pretty=format:"- %s" $PREV_TAG..HEAD | grep -E "^- Add " || true)
+            if [ -n "$FEATURES" ]; then
+              echo "### ✨ Features"
+              echo "$FEATURES"
+              echo ""
+            fi
+
+            # Bug Fixes (Fix ...)
+            FIXES=$(git log --pretty=format:"- %s" $PREV_TAG..HEAD | grep -E "^- Fix " || true)
+            if [ -n "$FIXES" ]; then
+              echo "### 🐛 Bug Fixes"
+              echo "$FIXES"
+              echo ""
+            fi
+
+            # Improvements (Improve ...)
+            IMPROVEMENTS=$(git log --pretty=format:"- %s" $PREV_TAG..HEAD | grep -E "^- Improve " || true)
+            if [ -n "$IMPROVEMENTS" ]; then
+              echo "### 🔧 Improvements"
+              echo "$IMPROVEMENTS"
+              echo ""
+            fi
+
+            # Other changes
+            OTHER=$(git log --pretty=format:"- %s" $PREV_TAG..HEAD | grep -vE "^- (Add|Fix|Improve) " || true)
+            if [ -n "$OTHER" ]; then
+              echo "### 📦 Other Changes"
+              echo "$OTHER"
+              echo ""
+            fi
+
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${{ github.ref_name }}"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.notes }}
