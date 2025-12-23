@@ -38,6 +38,35 @@ docker run -d \
 
 ### Using Docker Compose
 
+<details>
+<summary><strong>Portainer / Copy-Paste Stack</strong></summary>
+
+```yaml
+version: '3.8'
+
+services:
+  abs-sonos-bridge:
+    image: ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest
+    container_name: abs-sonos-bridge
+    network_mode: host
+    environment:
+      BRIDGE_ABS_URL: http://your-audiobookshelf-server:13378
+      BRIDGE_PUBLIC_URL: http://your-host-ip:8080
+      BRIDGE_SESSION_SECRET: ${BRIDGE_SESSION_SECRET}  # Set in Portainer environment or .env
+    volumes:
+      - /path/to/media:/media:ro
+      - /path/to/cache:/cache
+      - /path/to/config:/config
+    restart: unless-stopped
+```
+
+Generate `BRIDGE_SESSION_SECRET` with: `openssl rand -hex 32`
+
+</details>
+
+<details>
+<summary><strong>Using docker-compose.yml file</strong></summary>
+
 1. Download the example compose file:
 ```bash
 curl -O https://raw.githubusercontent.com/knoellp/audiobookshelf-sonos-bridge/main/docker-compose.example.yml
@@ -56,6 +85,8 @@ docker compose up -d
 ```
 
 4. Open `http://your-server-ip:8080` in your browser
+
+</details>
 
 ### Building from Source
 
