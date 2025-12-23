@@ -372,66 +372,51 @@ In `library.go:343` wird `item.Media.Duration` direkt verwendet ohne Fallback au
 
 ---
 
-## Issue 12: Sonos-Gruppierung - IN PROGRESS
+## Issue 12: Sonos-Gruppierung - COMPLETED
+
+**Abgeschlossen:** 2025-12-22
+
+Vollständige Unterstützung für Sonos-Gruppen implementiert:
+- Coordinator-Routing für gruppierte Lautsprecher
+- Gruppen-Lautstärke mit einem Slider
+- Individuelle Lautstärke pro Gruppenmitglied
+- ZoneGroupState Parsing für Gruppentopologie
+
+---
+
+## Issue 13: CI/CD & Docker Registry - IN PROGRESS
 
 **Genehmigt:** 2025-12-22
-**Detaillierter Plan:** [docs/features.md](features.md#sonos-gruppierung---implementierungsplan)
+**Detaillierter Plan:** [docs/features.md](features.md#öffentliche-installation--cicd)
 
-### Phase 1: Coordinator-Routing
+### Ziel
 
-**Ziel:** Wiedergabe funktioniert auf allen Gruppenmitgliedern
+Benutzer können die App mit einer einfachen `docker-compose.yml` starten:
+```yaml
+image: ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest
+```
 
-| # | Task | Status |
-|---|------|--------|
-| 1.1 | `getCoordinatorIP()` in `internal/web/player.go` erstellen | [ ] |
-| 1.2 | `HandlePlay` anpassen (Coordinator-Routing) | [ ] |
-| 1.3 | `HandleResume` anpassen | [ ] |
-| 1.4 | `HandlePause` anpassen | [ ] |
-| 1.5 | `HandleStop` anpassen | [ ] |
-| 1.6 | `HandleSeek` anpassen | [ ] |
-| 1.7 | Testen mit Playwright MCP | [ ] |
-
-### Phase 2: Gruppen-Lautstärke
-
-**Ziel:** Ein Slider steuert alle Lautsprecher proportional
+### Tasks
 
 | # | Task | Status |
 |---|------|--------|
-| 2.1 | `internal/sonos/grouprendering.go` erstellen | [ ] |
-| 2.2 | API Endpoint `GET /volume/group` erstellen | [ ] |
-| 2.3 | API Endpoint `POST /volume/group` erstellen | [ ] |
-| 2.4 | Frontend: Gruppen-Erkennung beim Laden | [ ] |
-| 2.5 | Frontend: Gruppen-Lautstärke-Slider | [ ] |
-| 2.6 | Frontend: Debouncing implementieren (250ms) | [ ] |
-| 2.7 | Endpoint `/sonos/group-info/{uuid}` für Gruppen-Status | [ ] |
-| 2.8 | Testen mit Playwright MCP | [ ] |
+| 13.1 | `.github/workflows/docker-publish.yml` erstellen | [x] |
+| 13.2 | `Dockerfile` erweitern (Build Args + OCI Labels) | [x] |
+| 13.3 | `docker-compose.example.yml` erstellen | [x] |
+| 13.4 | `README.md` Docker Compose Sektion aktualisieren | [x] |
+| 13.5 | GitHub Settings konfigurieren (Workflow Permissions) | [ ] |
+| 13.6 | Ersten Testing-Build auslösen (`git tag testing-v1.0.0-rc1`) | [ ] |
+| 13.7 | ghcr.io prüfen - Image verfügbar? | [ ] |
+| 13.8 | Nach main mergen und v1.0.0 Release erstellen | [ ] |
 
-### Phase 3: Individuelle Lautstärke
+### Erwartete Ergebnisse
 
-**Ziel:** Aufklappbare Liste mit Slider pro Lautsprecher
+**Nach testing-Tag:**
+- `ghcr.io/knoellp/audiobookshelf-sonos-bridge:testing`
 
-| # | Task | Status |
-|---|------|--------|
-| 3.1 | API Endpoint `GET /volume/members` erstellen | [ ] |
-| 3.2 | API Endpoint `POST /volume/member/{uuid}` erstellen | [ ] |
-| 3.3 | Frontend: Aufklappbare Sektion "Einzelne Lautsprecher" | [ ] |
-| 3.4 | Frontend: Liste mit Membern und individuellen Slidern | [ ] |
-| 3.5 | Frontend: Coordinator-Badge 👑 anzeigen | [ ] |
-| 3.6 | Frontend: Debouncing für individuelle Slider | [ ] |
-| 3.7 | Testen mit Playwright MCP | [ ] |
-
-### Phase 4: Gruppen-Management UI
-
-**Ziel:** Gruppen erstellen und bearbeiten direkt aus der App
-
-| # | Task | Status |
-|---|------|--------|
-| 4.1 | `JoinGroup(coordinatorUUID)` in `avtransport.go` hinzufügen | [ ] |
-| 4.2 | `LeaveGroup()` in `avtransport.go` hinzufügen | [ ] |
-| 4.3 | API Endpoint `POST /sonos/group/join` erstellen | [ ] |
-| 4.4 | API Endpoint `POST /sonos/group/leave` erstellen | [ ] |
-| 4.5 | API Endpoint `POST /sonos/group/update` erstellen (Batch) | [ ] |
-| 4.6 | Frontend: "Gruppe" Button im Sonos-Picker | [ ] |
-| 4.7 | Frontend: Gruppen-Editor Modal | [ ] |
-| 4.8 | Frontend: Checkbox-Liste mit Coordinator-Badge | [ ] |
-| 4.9 | Testen mit Playwright MCP | [ ] |
+**Nach v1.0.0-Tag:**
+- `ghcr.io/knoellp/audiobookshelf-sonos-bridge:1.0.0`
+- `ghcr.io/knoellp/audiobookshelf-sonos-bridge:1.0`
+- `ghcr.io/knoellp/audiobookshelf-sonos-bridge:1`
+- `ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest`
+- GitHub Release mit auto-generated notes
