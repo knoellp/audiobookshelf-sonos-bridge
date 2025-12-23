@@ -92,6 +92,85 @@
         if (savedUUID && toggleBtn) {
             toggleBtn.dataset.sonosUuid = savedUUID;
         }
+
+        // Start group polling
+        startGroupPolling();
+    });
+
+    // Group polling mechanism - checks for Sonos group changes every 10 seconds
+    let lastGroupState = null;
+    let groupPollInterval = null;
+    let lastUserInteraction = 0;  // Timestamp of last user interaction
+    const INTERACTION_PAUSE_MS = 10000;  // Pause polling for 10 seconds after interaction
+
+    // Called by transport controls to pause polling during user interaction
+    function markUserInteraction() {
+        lastUserInteraction = Date.now();
+    }
+
+    function startGroupPolling() {
+        // Don't start if already running
+        if (groupPollInterval) return;
+
+        // Poll every 10 seconds
+        groupPollInterval = setInterval(pollGroups, 10000);
+
+        // Also poll immediately on start to get initial state
+        pollGroups();
+    }
+
+    function stopGroupPolling() {
+        if (groupPollInterval) {
+            clearInterval(groupPollInterval);
+            groupPollInterval = null;
+        }
+    }
+
+    async function pollGroups() {
+        // Skip polling if user recently interacted (prevents race conditions)
+        if (Date.now() - lastUserInteraction < INTERACTION_PAUSE_MS) {
+            console.debug('Polling paused due to recent user interaction');
+            return;
+        }
+
+        try {
+            const response = await fetch('/sonos/poll-groups');
+            if (!response.ok) return;
+
+            const data = await response.json();
+            const newState = JSON.stringify(data.devices);
+
+            // Check if state changed
+            if (lastGroupState !== null && lastGroupState !== newState) {
+                console.log('Group state changed, refreshing UI');
+                onGroupStateChanged();
+            }
+
+            lastGroupState = newState;
+        } catch (err) {
+            // Silently ignore polling errors (network issues, etc.)
+            console.debug('Group polling failed:', err);
+        }
+    }
+
+    function onGroupStateChanged() {
+        // Refresh the device list in the picker modal
+        const deviceList = document.getElementById('sonos-device-list');
+        if (deviceList && typeof htmx !== 'undefined') {
+            htmx.ajax('GET', '/sonos/devices', {target: '#sonos-device-list', swap: 'innerHTML'});
+        }
+
+        // Dispatch event for other components (e.g., transport controls)
+        document.dispatchEvent(new CustomEvent('sonosGroupsChanged'));
+    }
+
+    // Stop polling when page is hidden (saves resources)
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            stopGroupPolling();
+        } else {
+            startGroupPolling();
+        }
     });
     </script>
     {{end}}

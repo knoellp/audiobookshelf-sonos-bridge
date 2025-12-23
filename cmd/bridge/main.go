@@ -223,6 +223,7 @@ func main() {
 	mux.Handle("GET /sonos/devices", auth(sonosHandler.HandleGetDevices))
 	mux.Handle("POST /sonos/refresh", auth(sonosHandler.HandleRefreshDevices))
 	mux.Handle("POST /sonos/quick-refresh", auth(sonosHandler.HandleQuickRefresh))
+	mux.Handle("GET /sonos/poll-groups", auth(sonosHandler.HandlePollGroups))
 
 	// Player routes (protected)
 	mux.Handle("POST /play", auth(playerHandler.HandlePlay))
@@ -242,6 +243,7 @@ func main() {
 	mux.Handle("GET /sonos/group-info", auth(playerHandler.HandleGetGroupInfo))
 	mux.Handle("GET /volume/group", auth(playerHandler.HandleGetGroupVolume))
 	mux.Handle("POST /volume/group", auth(playerHandler.HandleSetGroupVolume))
+	mux.Handle("POST /volume/group/adjust", auth(playerHandler.HandleAdjustGroupVolume))
 
 	// Individual member volume routes (protected)
 	mux.Handle("GET /volume/members", auth(playerHandler.HandleGetMemberVolumes))

@@ -1632,6 +1632,87 @@ func (h *PlayerHandler) HandleSetGroupVolume(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusOK)
 }
 
+// HandleAdjustGroupVolume handles POST /volume/group/adjust requests.
+// Adjusts the group volume by a delta value (-100 to +100).
+// Returns the new volume value.
+func (h *PlayerHandler) HandleAdjustGroupVolume(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	deltaStr := r.FormValue("delta")
+	if deltaStr == "" {
+		http.Error(w, "delta required", http.StatusBadRequest)
+		return
+	}
+
+	delta, err := strconv.Atoi(deltaStr)
+	if err != nil || delta < -100 || delta > 100 {
+		http.Error(w, "invalid delta", http.StatusBadRequest)
+		return
+	}
+
+	// Get current playback session
+	playback, err := h.playbackStore.GetBySessionID(session.ID)
+	if err != nil || playback == nil {
+		http.Error(w, "no active playback", http.StatusNotFound)
+		return
+	}
+
+	// Get Sonos device
+	device, err := h.sonosStore.Get(playback.SonosUUID)
+	if err != nil || device == nil {
+		http.Error(w, "device not found", http.StatusNotFound)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Get coordinator IP
+	coordinatorIP := h.getCoordinatorIP(ctx, device.IPAddress)
+
+	// Get current group volume
+	grc := sonos.NewGroupRenderingControl(coordinatorIP)
+	currentVolume, err := grc.GetGroupVolume(ctx)
+	if err != nil {
+		slog.Error("failed to get group volume", "error", err)
+		http.Error(w, "failed to get group volume", http.StatusInternalServerError)
+		return
+	}
+
+	// Calculate new volume
+	newVolume := currentVolume + delta
+	if newVolume < 0 {
+		newVolume = 0
+	}
+	if newVolume > 100 {
+		newVolume = 100
+	}
+
+	// Set new group volume
+	if err := grc.SetGroupVolume(ctx, newVolume); err != nil {
+		slog.Error("failed to set group volume", "error", err)
+		http.Error(w, "failed to set group volume", http.StatusInternalServerError)
+		return
+	}
+
+	// Return the new volume
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"volume": newVolume})
+}
+
 // HandleGetGroupInfo handles GET /sonos/group-info requests.
 // Returns information about the current group (if any).
 // Accepts optional ?uuid= parameter to check a specific device's group,

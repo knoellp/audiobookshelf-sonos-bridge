@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -26,6 +28,7 @@ func NewSonosHandler(discovery *sonos.Discovery, templates *template.Template) *
 
 // HandleGetDevices returns the list of Sonos devices as HTML for htmx.
 // If no devices are in the store, it triggers automatic discovery.
+// Also refreshes group info from Sonos to ensure group sizes are current.
 func (h *SonosHandler) HandleGetDevices(w http.ResponseWriter, r *http.Request) {
 	session := SessionFromContext(r.Context())
 	if session == nil {
@@ -49,6 +52,15 @@ func (h *SonosHandler) HandleGetDevices(w http.ResponseWriter, r *http.Request) 
 			// Refresh devices from store after discovery
 			devices, _ = h.discovery.GetDevices()
 		}
+	} else {
+		// Always refresh group info to ensure current group sizes
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := h.discovery.RefreshGroupInfo(ctx); err != nil {
+			slog.Warn("HandleGetDevices: RefreshGroupInfo failed", "error", err)
+		}
+		// Re-fetch devices after refresh to get updated group sizes
+		devices, _ = h.discovery.GetDevices()
 	}
 
 	// Convert to template format
@@ -96,7 +108,11 @@ func (h *SonosHandler) HandleQuickRefresh(w http.ResponseWriter, r *http.Request
 	defer cancel()
 
 	// Quick refresh group info from ZoneGroupTopology
-	_ = h.discovery.RefreshGroupInfo(ctx)
+	if err := h.discovery.RefreshGroupInfo(ctx); err != nil {
+		slog.Warn("HandleQuickRefresh: RefreshGroupInfo failed", "error", err)
+	} else {
+		slog.Debug("HandleQuickRefresh: RefreshGroupInfo completed successfully")
+	}
 
 	// Get updated devices from store
 	devices, err := h.discovery.GetDevices()
@@ -195,4 +211,69 @@ type DeviceResponse struct {
 	Model       string `json:"model"`
 	IsReachable bool   `json:"is_reachable"`
 	GroupSize   int    `json:"group_size"` // Number of players in this group (>1 for grouped coordinator)
+}
+
+// GroupPollResponse is the response for the group polling endpoint.
+type GroupPollResponse struct {
+	Devices []GroupPollDevice `json:"devices"`
+}
+
+// GroupPollDevice is a minimal device info for group polling.
+type GroupPollDevice struct {
+	UUID      string `json:"uuid"`
+	Name      string `json:"name"`
+	GroupSize int    `json:"group_size"`
+	IsHidden  bool   `json:"is_hidden"`
+}
+
+// HandlePollGroups polls Sonos for group changes and returns current state as JSON.
+// This endpoint is designed to be called frequently (every 10 seconds) by the frontend.
+func (h *SonosHandler) HandlePollGroups(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	// Refresh group info from Sonos
+	if err := h.discovery.RefreshGroupInfo(ctx); err != nil {
+		slog.Debug("HandlePollGroups: RefreshGroupInfo failed", "error", err)
+		// Continue anyway - return cached data
+	}
+
+	// Get current devices from store
+	devices, err := h.discovery.GetDevices()
+	if err != nil {
+		http.Error(w, "Failed to get devices", http.StatusInternalServerError)
+		return
+	}
+
+	// Build response with minimal data needed for change detection
+	response := GroupPollResponse{
+		Devices: make([]GroupPollDevice, 0, len(devices)),
+	}
+
+	for _, d := range devices {
+		groupSize := d.GroupSize
+		if groupSize == 0 {
+			groupSize = 1
+		}
+		response.Devices = append(response.Devices, GroupPollDevice{
+			UUID:      d.UUID,
+			Name:      d.Name,
+			GroupSize: groupSize,
+			IsHidden:  d.IsHidden,
+		})
+	}
+
+	// Sort by name for consistent comparison
+	sort.Slice(response.Devices, func(i, j int) bool {
+		return response.Devices[i].Name < response.Devices[j].Name
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
