@@ -100,6 +100,13 @@
     // Group polling mechanism - checks for Sonos group changes every 10 seconds
     let lastGroupState = null;
     let groupPollInterval = null;
+    let lastUserInteraction = 0;  // Timestamp of last user interaction
+    const INTERACTION_PAUSE_MS = 10000;  // Pause polling for 10 seconds after interaction
+
+    // Called by transport controls to pause polling during user interaction
+    function markUserInteraction() {
+        lastUserInteraction = Date.now();
+    }
 
     function startGroupPolling() {
         // Don't start if already running
@@ -120,6 +127,12 @@
     }
 
     async function pollGroups() {
+        // Skip polling if user recently interacted (prevents race conditions)
+        if (Date.now() - lastUserInteraction < INTERACTION_PAUSE_MS) {
+            console.debug('Polling paused due to recent user interaction');
+            return;
+        }
+
         try {
             const response = await fetch('/sonos/poll-groups');
             if (!response.ok) return;
