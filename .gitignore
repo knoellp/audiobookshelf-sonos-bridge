@@ -115,3 +115,4 @@ e2e-test*.js
 # Claude Code / Speckit tooling (not project-specific)
 .claude/
 .specify/
+GEMINI.md
