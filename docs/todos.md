@@ -420,3 +420,68 @@ image: ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest
 - `ghcr.io/knoellp/audiobookshelf-sonos-bridge:1`
 - `ghcr.io/knoellp/audiobookshelf-sonos-bridge:latest`
 - GitHub Release mit auto-generated notes
+
+---
+
+## Issue 14: Sleep Timer - IN PROGRESS
+
+**Erstellt:** 2025-12-23
+
+### Beschreibung
+Sleep Timer stoppt die Wiedergabe nach einer vom Benutzer gewählten Zeit. Der Timer läuft server-seitig und funktioniert auch wenn das Client-Gerät offline geht.
+
+### Anforderungen
+| Anforderung | Entscheidung |
+|-------------|--------------|
+| Target | Nur Sonos |
+| Kapitelende-Option | Nein |
+| Countdown-Anzeige | Ja, "xx:xx verbleibend" |
+| Bei Buchwechsel | Timer abbrechen |
+| Warnung vor Ablauf | Nein |
+
+### Tasks
+
+| # | Task | Status |
+|---|------|--------|
+| 14.1 | DB-Migration: `sleep_at` Spalte hinzufügen | [ ] |
+| 14.2 | `PlaybackSession` Struct erweitern + Store-Methoden | [ ] |
+| 14.3 | `SleepTimerWorker` Background-Service erstellen | [ ] |
+| 14.4 | API-Endpoints: POST/DELETE/GET `/sleep-timer` | [ ] |
+| 14.5 | Worker in `main.go` integrieren | [ ] |
+| 14.6 | UI: Button, Modal, Countdown in `transport.html` | [ ] |
+| 14.7 | Timer bei Buchwechsel löschen (`HandlePlay`) | [ ] |
+| 14.8 | Test mit Playwright MCP (Player: Büro) | [ ] |
+
+### Architektur
+
+```
+SERVER (läuft immer)
+├── SQLite: playback_sessions.sleep_at = Unix-Timestamp
+├── SleepTimerWorker (alle 10 Sekunden):
+│   └── IF sleep_at <= now() → UPnP Pause an Sonos
+└── Unabhängig vom Client!
+
+CLIENT (kann offline gehen)
+├── POST /sleep-timer { minutes: 30 } → Timer setzen
+├── Countdown-Anzeige (rein kosmetisch)
+└── Wenn offline → Server pausiert trotzdem pünktlich
+```
+
+### API-Endpoints
+
+| Endpoint | Methode | Request | Response |
+|----------|---------|---------|----------|
+| `/sleep-timer` | POST | `minutes=30` | `{"sleep_at": 1703350800, "remaining_sec": 1800}` |
+| `/sleep-timer` | DELETE | - | `{"success": true}` |
+| `/sleep-timer` | GET | - | `{"active": true, "remaining_sec": 1234}` |
+
+### Geänderte/Neue Dateien
+
+| Datei | Änderung |
+|-------|----------|
+| `internal/store/db.go` | Migration für `sleep_at` Spalte |
+| `internal/store/playback.go` | `SleepAt` Feld + neue Methoden |
+| `internal/web/sleep_timer.go` | **NEU**: SleepTimerWorker |
+| `internal/web/player.go` | Neue Handler + Status-Erweiterung |
+| `cmd/bridge/main.go` | Worker starten |
+| `web/templates/partials/transport.html` | Button + Modal + JS |

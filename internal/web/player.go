@@ -320,6 +320,19 @@ func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Check if there's an existing session with a different item - clear its sleep timer
+	existingSession, _ := h.playbackStore.GetBySessionID(session.ID)
+	if existingSession != nil && existingSession.ItemID != itemID {
+		// User is starting a different book - clear any active sleep timer
+		if existingSession.SleepAt != nil {
+			slog.Info("clearing sleep timer on book change",
+				"old_item_id", existingSession.ItemID,
+				"new_item_id", itemID,
+			)
+			h.playbackStore.ClearSleepTimer(existingSession.ID)
+		}
+	}
+
 	// Create/update playback session
 	playbackSession := &store.PlaybackSession{
 		ID:                 generateID(),
@@ -993,8 +1006,17 @@ func (h *PlayerHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	volume, _ := avt.GetVolume(r.Context())
 	muted, _ := avt.GetMute(r.Context())
 
+	// Calculate sleep timer remaining seconds
+	var sleepTimerRemainingSec *int
+	if playback.SleepAt != nil {
+		remaining := int(time.Until(*playback.SleepAt).Seconds())
+		if remaining > 0 {
+			sleepTimerRemainingSec = &remaining
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	response := map[string]interface{}{
 		"active":       true,
 		"item_id":      playback.ItemID,
 		"is_playing":   isPlaying,
@@ -1004,7 +1026,11 @@ func (h *PlayerHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		"duration_str": formatDurationSec(durationSec),
 		"volume":       volume,
 		"muted":        muted,
-	})
+	}
+	if sleepTimerRemainingSec != nil {
+		response["sleep_timer_remaining_sec"] = *sleepTimerRemainingSec
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleSegmentTransition handles the transition to the next segment.
@@ -2241,6 +2267,153 @@ func (h *PlayerHandler) HandleLeaveGroup(w http.ResponseWriter, r *http.Request)
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// HandleSetSleepTimer handles POST /sleep-timer requests to set or clear a sleep timer.
+func (h *PlayerHandler) HandleSetSleepTimer(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get current playback session
+	playback, err := h.playbackStore.GetBySessionID(session.ID)
+	if err != nil || playback == nil {
+		http.Error(w, "no active playback session", http.StatusNotFound)
+		return
+	}
+
+	// Parse minutes from form
+	minutesStr := r.FormValue("minutes")
+	minutes, err := strconv.Atoi(minutesStr)
+	if err != nil || minutes < 0 {
+		http.Error(w, "invalid minutes value", http.StatusBadRequest)
+		return
+	}
+
+	// Validate allowed values
+	allowedMinutes := map[int]bool{15: true, 30: true, 45: true, 60: true, 90: true, 120: true}
+	if minutes != 0 && !allowedMinutes[minutes] {
+		http.Error(w, "minutes must be one of: 15, 30, 45, 60, 90, 120", http.StatusBadRequest)
+		return
+	}
+
+	if minutes == 0 {
+		// Clear the timer
+		if err := h.playbackStore.ClearSleepTimer(playback.ID); err != nil {
+			slog.Error("failed to clear sleep timer", "error", err)
+			http.Error(w, "failed to clear sleep timer", http.StatusInternalServerError)
+			return
+		}
+		slog.Info("sleep timer cleared",
+			"session_id", session.ID,
+			"item_id", playback.ItemID,
+		)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"active": false,
+		})
+		return
+	}
+
+	// Set the timer
+	sleepAt := time.Now().Add(time.Duration(minutes) * time.Minute)
+	if err := h.playbackStore.SetSleepTimer(playback.ID, sleepAt); err != nil {
+		slog.Error("failed to set sleep timer", "error", err)
+		http.Error(w, "failed to set sleep timer", http.StatusInternalServerError)
+		return
+	}
+
+	remainingSec := int(time.Until(sleepAt).Seconds())
+	slog.Info("sleep timer set",
+		"session_id", session.ID,
+		"item_id", playback.ItemID,
+		"minutes", minutes,
+		"sleep_at", sleepAt,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"active":        true,
+		"sleep_at":      sleepAt.Unix(),
+		"remaining_sec": remainingSec,
+	})
+}
+
+// HandleDeleteSleepTimer handles DELETE /sleep-timer requests to clear a sleep timer.
+func (h *PlayerHandler) HandleDeleteSleepTimer(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get current playback session
+	playback, err := h.playbackStore.GetBySessionID(session.ID)
+	if err != nil || playback == nil {
+		http.Error(w, "no active playback session", http.StatusNotFound)
+		return
+	}
+
+	// Clear the timer
+	if err := h.playbackStore.ClearSleepTimer(playback.ID); err != nil {
+		slog.Error("failed to clear sleep timer", "error", err)
+		http.Error(w, "failed to clear sleep timer", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("sleep timer cleared",
+		"session_id", session.ID,
+		"item_id", playback.ItemID,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// HandleGetSleepTimer handles GET /sleep-timer requests to get sleep timer status.
+func (h *PlayerHandler) HandleGetSleepTimer(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get current playback session
+	playback, err := h.playbackStore.GetBySessionID(session.ID)
+	if err != nil || playback == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"active": false,
+		})
+		return
+	}
+
+	if playback.SleepAt == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"active": false,
+		})
+		return
+	}
+
+	remainingSec := int(time.Until(*playback.SleepAt).Seconds())
+	if remainingSec <= 0 {
+		// Timer has expired (will be processed by worker soon)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"active": false,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"active":        true,
+		"sleep_at":      playback.SleepAt.Unix(),
+		"remaining_sec": remainingSec,
+	})
 }
 
 // GetSession extracts the session from context.

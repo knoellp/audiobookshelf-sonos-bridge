@@ -149,6 +149,9 @@ func main() {
 	// Initialize progress syncer
 	progressSyncer := web.NewProgressSyncer(absClient, playbackStore, sessionStore, deviceStore, authHandler)
 
+	// Initialize sleep timer worker
+	sleepTimerWorker := web.NewSleepTimerWorker(playbackStore, sessionStore, deviceStore, absClient, authHandler)
+
 	// Initialize cache warmup job
 	warmupJob := cache.NewWarmupJob(
 		cacheIndex,
@@ -254,6 +257,11 @@ func main() {
 	mux.Handle("POST /sonos/group/join", auth(playerHandler.HandleJoinGroup))
 	mux.Handle("POST /sonos/group/leave", auth(playerHandler.HandleLeaveGroup))
 
+	// Sleep timer routes (protected)
+	mux.Handle("POST /sleep-timer", auth(playerHandler.HandleSetSleepTimer))
+	mux.Handle("DELETE /sleep-timer", auth(playerHandler.HandleDeleteSleepTimer))
+	mux.Handle("GET /sleep-timer", auth(playerHandler.HandleGetSleepTimer))
+
 	// Wrap with logging middleware
 	handler_http := web.LoggingMiddleware(logger)(mux)
 
@@ -273,6 +281,7 @@ func main() {
 	// Start background services
 	cacheWorker.Start(ctx)
 	progressSyncer.Start(ctx)
+	sleepTimerWorker.Start(ctx)
 	warmupJob.Start(ctx)
 
 	// Log path mappings
@@ -308,6 +317,7 @@ func main() {
 
 	// Stop background services
 	warmupJob.Stop()
+	sleepTimerWorker.Stop()
 	progressSyncer.Stop()
 	cacheWorker.Stop()
 
