@@ -12,20 +12,62 @@
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <link rel="apple-touch-icon" sizes="512x512" href="/static/audiobookshelf-bridge-WebApp-Icon.png">
     <title>{{if .Title}}{{.Title}} - {{end}}Audiobookshelf Sonos Bridge</title>
-    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="/static/style.css?v=10">
     <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
     {{if .ShowHeader}}
     <header class="header">
         <div class="header-content">
-            <a href="/libraries" class="logo">
+            <!-- Left: Burger menu (mobile) -->
+            <button class="header-burger" id="header-burger" aria-label="Menu">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+
+            <!-- Logo -->
+            <a href="/" class="logo">
                 <img src="/static/Audiobookshelf-bridge-logo-dark.png" alt="Audiobookshelf Sonos Bridge" class="logo-img logo-dark">
                 <img src="/static/Audiobookshelf-bridge-logo-light.png" alt="Audiobookshelf Sonos Bridge" class="logo-img logo-light">
             </a>
+
+            <!-- Center: Navigation tabs (desktop) -->
             {{if .Username}}
+            <nav class="header-nav" id="header-nav">
+                <a href="/library/recent" class="nav-tab {{if eq .ActiveTab "recent"}}active{{end}}">Zuletzt</a>
+                <a href="/library/series{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "series"}}active{{end}}">Serien</a>
+                <a href="/library/authors{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "authors"}}active{{end}}">Autoren</a>
+                <a href="/library/genres{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "genres"}}active{{end}}">Genres</a>
+                <a href="/libraries/{{.SelectedLibraryID}}/items" class="nav-tab {{if eq .ActiveTab "all"}}active{{end}}">Alle</a>
+            </nav>
+
+            <!-- Right: Library picker, Sonos, User -->
             <div class="header-actions">
-                <button type="button" id="sonos-picker-toggle" class="btn btn-icon" title="Select Sonos Device">
+                <!-- Library picker button -->
+                {{if .Libraries}}
+                <div class="library-picker">
+                    <button type="button" id="library-picker-toggle" class="btn btn-icon" title="Bibliothek wählen">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                        </svg>
+                        <span id="selected-library-name" class="library-badge">{{range .Libraries}}{{if eq $.SelectedLibraryID .ID}}{{.Name}}{{end}}{{end}}</span>
+                    </button>
+                    <div class="library-dropdown" id="library-dropdown">
+                        {{range .Libraries}}
+                        <button type="button" class="library-option {{if eq $.SelectedLibraryID .ID}}active{{end}}" data-library-id="{{.ID}}" onclick="selectLibrary('{{.ID}}', '{{.Name}}')">
+                            {{.Name}}
+                        </button>
+                        {{end}}
+                    </div>
+                </div>
+                {{end}}
+
+                <!-- Sonos device picker -->
+                <button type="button" id="sonos-picker-toggle" class="btn btn-icon" title="Sonos Gerät wählen">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
                         <circle cx="12" cy="14" r="4"></circle>
@@ -33,14 +75,32 @@
                     </svg>
                     <span id="selected-device-name" class="device-badge"></span>
                 </button>
+
+                <!-- User menu -->
                 <div class="user-menu">
                     <span class="username">{{.Username}}</span>
                     <form action="/auth/logout" method="POST" class="logout-form">
-                        <button type="submit" class="btn btn-link">Logout</button>
+                        <button type="submit" class="btn btn-icon logout-btn" title="Logout">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                                <polyline points="16 17 21 12 16 7"></polyline>
+                                <line x1="21" y1="12" x2="9" y2="12"></line>
+                            </svg>
+                            <span class="logout-text">Logout</span>
+                        </button>
                     </form>
                 </div>
             </div>
             {{end}}
+        </div>
+
+        <!-- Mobile nav dropdown -->
+        <div class="header-nav-mobile" id="header-nav-mobile">
+            <a href="/library/recent" class="nav-tab {{if eq .ActiveTab "recent"}}active{{end}}">Zuletzt</a>
+            <a href="/library/series{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "series"}}active{{end}}">Serien</a>
+            <a href="/library/authors{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "authors"}}active{{end}}">Autoren</a>
+            <a href="/library/genres{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "genres"}}active{{end}}">Genres</a>
+            <a href="/libraries/{{.SelectedLibraryID}}/items" class="nav-tab {{if eq .ActiveTab "all"}}active{{end}}">Alle</a>
         </div>
     </header>
     <!-- Sonos Device Picker Modal -->
@@ -65,6 +125,32 @@
     });
     // Setup event listeners on load (better iOS WebApp support than onclick)
     document.addEventListener('DOMContentLoaded', function() {
+        // Header burger menu toggle
+        const burger = document.getElementById('header-burger');
+        const mobileNav = document.getElementById('header-nav-mobile');
+        if (burger && mobileNav) {
+            burger.addEventListener('click', function() {
+                mobileNav.classList.toggle('open');
+                burger.classList.toggle('open');
+            });
+        }
+
+        // Library picker toggle
+        const libraryToggle = document.getElementById('library-picker-toggle');
+        const libraryDropdown = document.getElementById('library-dropdown');
+        if (libraryToggle && libraryDropdown) {
+            libraryToggle.addEventListener('click', function(e) {
+                e.stopPropagation();
+                libraryDropdown.classList.toggle('open');
+            });
+            // Close dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!libraryDropdown.contains(e.target) && !libraryToggle.contains(e.target)) {
+                    libraryDropdown.classList.remove('open');
+                }
+            });
+        }
+
         // Sonos picker toggle button
         const toggleBtn = document.getElementById('sonos-picker-toggle');
         if (toggleBtn) {
@@ -93,9 +179,35 @@
             toggleBtn.dataset.sonosUuid = savedUUID;
         }
 
+        // Auto-save current library ID (so root redirect works on next visit)
+        const currentLibraryID = '{{.SelectedLibraryID}}';
+        if (currentLibraryID) {
+            localStorage.setItem('selectedLibraryID', currentLibraryID);
+        }
+
         // Start group polling
         startGroupPolling();
     });
+
+    // Library selection
+    function selectLibrary(libraryId, libraryName) {
+        localStorage.setItem('selectedLibraryID', libraryId);
+        document.getElementById('selected-library-name').textContent = libraryName;
+        document.getElementById('library-dropdown').classList.remove('open');
+
+        // Update active class
+        document.querySelectorAll('.library-option').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.libraryId === libraryId);
+        });
+
+        // Navigate based on current path
+        const path = window.location.pathname;
+        if (path.startsWith('/library/series') || path.startsWith('/library/authors') || path.startsWith('/library/genres')) {
+            window.location.href = path.split('?')[0] + '?library=' + libraryId;
+        } else if (path.startsWith('/libraries/') || path === '/library' || path === '/') {
+            window.location.href = '/libraries/' + libraryId + '/items';
+        }
+    }
 
     // Group polling mechanism - checks for Sonos group changes every 10 seconds
     let lastGroupState = null;

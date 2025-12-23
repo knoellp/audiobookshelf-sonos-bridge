@@ -1,0 +1,96 @@
+{{define "content"}}
+<div class="items-container">
+    <div class="items-header">
+        <a href="/library/series?library={{.SelectedLibraryID}}" class="back-link">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+            Zurück zu Serien
+        </a>
+        <h1>{{.SeriesName}}</h1>
+        <p class="subtitle">{{.BookCount}} {{if eq .BookCount 1}}Buch{{else}}Bücher{{end}} in dieser Serie</p>
+    </div>
+
+    {{if .Books}}
+    <div class="items-grid">
+        {{range .Books}}
+        <a href="/item/{{.ID}}" class="item-card">
+            <div class="item-cover">
+                <img src="{{.CoverURL}}" alt="{{.Title}}" loading="lazy">
+                {{if .Sequence}}
+                <span class="sequence-badge">{{.Sequence}}</span>
+                {{end}}
+            </div>
+            <div class="item-info">
+                <h3 class="item-title">{{.Title}}</h3>
+                {{if .Author}}
+                <p class="item-author">{{.Author}}</p>
+                {{end}}
+                <span class="item-duration">{{formatDuration .DurationSec}}</span>
+            </div>
+        </a>
+        {{end}}
+    </div>
+    {{else}}
+    <div class="empty-state">
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        <h3>Keine Bücher gefunden</h3>
+        <p>In dieser Serie gibt es keine Bücher.</p>
+    </div>
+    {{end}}
+</div>
+
+<style>
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    margin-bottom: 0.5rem;
+}
+
+.back-link:hover {
+    color: var(--text);
+}
+
+.sequence-badge {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    background: var(--primary);
+    color: white;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    min-width: 1.5rem;
+    text-align: center;
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 2rem;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.empty-state svg {
+    margin-bottom: 1.5rem;
+    opacity: 0.5;
+}
+
+.empty-state h3 {
+    font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+    color: var(--text);
+}
+</style>
+{{end}}

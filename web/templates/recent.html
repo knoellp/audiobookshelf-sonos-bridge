@@ -1,0 +1,76 @@
+{{define "content"}}
+<div class="items-container">
+    <div class="items-header">
+        <h1>Zuletzt gehört</h1>
+        <p class="subtitle">Deine kürzlich gespielten Hörbücher aus allen Bibliotheken</p>
+    </div>
+
+    {{if .Items}}
+    <div class="items-grid">
+        {{range .Items}}
+        <a href="/item/{{.ID}}" class="item-card">
+            <div class="item-cover">
+                {{if .CoverURL}}
+                <img src="{{.CoverURL}}" alt="{{.Title}}" loading="lazy">
+                {{else}}
+                <div class="item-cover-fallback">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                    </svg>
+                </div>
+                {{end}}
+                {{if .LibraryName}}
+                <span class="library-badge">{{.LibraryName}}</span>
+                {{end}}
+            </div>
+            <div class="item-info">
+                <h3 class="item-title">{{.Title}}</h3>
+                {{if .Author}}
+                <p class="item-author">{{.Author}}</p>
+                {{end}}
+                <span class="item-duration">{{formatDuration .DurationSec}}</span>
+            </div>
+        </a>
+        {{end}}
+    </div>
+    {{else}}
+    <div class="empty-state">
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+        <h3>Keine kürzlich gespielten Hörbücher</h3>
+        <p>Starte ein Hörbuch, um es hier zu sehen.</p>
+        <a href="/library" class="btn btn-primary">Bibliothek durchsuchen</a>
+    </div>
+    {{end}}
+</div>
+
+<style>
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 2rem;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.empty-state svg {
+    margin-bottom: 1.5rem;
+    opacity: 0.5;
+}
+
+.empty-state h3 {
+    font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+    color: var(--text);
+}
+
+.empty-state p {
+    margin-bottom: 1.5rem;
+}
+</style>
+{{end}}

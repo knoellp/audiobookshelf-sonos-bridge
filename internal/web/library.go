@@ -2,12 +2,14 @@ package web
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +34,8 @@ func NewLibraryHandler(authHandler *AuthHandler, templates *template.Template, c
 	}
 }
 
-// HandleLibraries renders the library list page.
+// HandleLibraries redirects to the first audiobook library (or shows list if no libraries).
+// The UI handles library selection via the header dropdown.
 func (h *LibraryHandler) HandleLibraries(w http.ResponseWriter, r *http.Request) {
 	session := SessionFromContext(r.Context())
 	if session == nil {
@@ -59,11 +62,32 @@ func (h *LibraryHandler) HandleLibraries(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Find first audiobook library
+	selectedLibraryID := ""
+	for _, lib := range libraries {
+		if lib.MediaType == "book" {
+			selectedLibraryID = lib.ID
+			break
+		}
+	}
+	if selectedLibraryID == "" && len(libraries) > 0 {
+		selectedLibraryID = libraries[0].ID
+	}
+
+	// Auto-redirect to the first library's items page
+	if selectedLibraryID != "" {
+		http.Redirect(w, r, "/libraries/"+selectedLibraryID+"/items", http.StatusSeeOther)
+		return
+	}
+
+	// Only show library list if no libraries exist (edge case)
 	data := map[string]interface{}{
-		"Title":      "Libraries",
-		"ShowHeader": true,
-		"Username":   session.ABSUsername,
-		"Libraries":  libraries,
+		"Title":             "Bibliotheken",
+		"ShowHeader":        true,
+		"Username":          session.ABSUsername,
+		"Libraries":         libraries,
+		"SelectedLibraryID": selectedLibraryID,
+		"ActiveTab":         "",
 	}
 
 	h.render(w, "library.html", data)
@@ -94,6 +118,7 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 
 	// Parse query parameters
 	query := r.URL.Query().Get("q")
+	filter := r.URL.Query().Get("filter")
 	sort := r.URL.Query().Get("sort")
 	if sort == "" {
 		sort = "title-asc"
@@ -150,6 +175,7 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 			Page:    offset / limit,
 			Sort:    sortField,
 			Desc:    sortDesc,
+			Filter:  filter,
 			Include: "progress",
 		}
 		itemsResp, err = absClient.GetLibraryItems(ctx, libraryID, opts)
@@ -164,7 +190,7 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get library name
+	// Get libraries for navigation
 	libraries, _ := absClient.GetLibraries(ctx)
 	libraryName := "Library"
 	for _, lib := range libraries {
@@ -183,20 +209,23 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 	hasMore := offset+len(items) < itemsResp.Total
 
 	data := map[string]interface{}{
-		"Title":       libraryName,
-		"ShowHeader":  true,
-		"Username":    session.ABSUsername,
-		"LibraryID":   libraryID,
-		"LibraryName": libraryName,
-		"Items":       items,
-		"Total":       itemsResp.Total,
-		"Query":       query,
-		"Sort":        sort,
-		"View":        view,
-		"Limit":       limit,
-		"Offset":      offset,
-		"NextOffset":  offset + limit,
-		"HasMore":     hasMore,
+		"Title":             libraryName,
+		"ShowHeader":        true,
+		"Username":          session.ABSUsername,
+		"LibraryID":         libraryID,
+		"LibraryName":       libraryName,
+		"Items":             items,
+		"Total":             itemsResp.Total,
+		"Query":             query,
+		"Sort":              sort,
+		"View":              view,
+		"Limit":             limit,
+		"Offset":            offset,
+		"NextOffset":        offset + limit,
+		"HasMore":           hasMore,
+		"Libraries":         libraries,
+		"SelectedLibraryID": libraryID,
+		"ActiveTab":         "all",
 	}
 
 	// If htmx request for partial update
@@ -287,6 +316,559 @@ func (h *LibraryHandler) HandleFilterData(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(filterData)
+}
+
+// HandleRecent renders the "Recently Played" page with items from all libraries.
+func (h *LibraryHandler) HandleRecent(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	absClient, err := h.authHandler.GetABSClientForSession(session)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	// Fetch items in progress
+	itemsInProgress, err := absClient.GetItemsInProgress(ctx, 50)
+	if err != nil {
+		if err == abs.ErrUnauthorized {
+			http.Redirect(w, r, "/login?error=session_expired", http.StatusSeeOther)
+			return
+		}
+		slog.Error("failed to fetch items in progress", "error", err)
+		http.Error(w, "Failed to fetch recent items", http.StatusInternalServerError)
+		return
+	}
+
+	// Get libraries for navigation and library name lookup
+	libraries, _ := absClient.GetLibraries(ctx)
+	libraryNameMap := make(map[string]string)
+	for _, lib := range libraries {
+		libraryNameMap[lib.ID] = lib.Name
+	}
+
+	// Set default library ID
+	selectedLibraryID := ""
+	for _, lib := range libraries {
+		if lib.MediaType == "book" {
+			selectedLibraryID = lib.ID
+			break
+		}
+	}
+	if selectedLibraryID == "" && len(libraries) > 0 {
+		selectedLibraryID = libraries[0].ID
+	}
+
+	// Convert to RecentItem format
+	items := make([]RecentItem, len(itemsInProgress))
+	for i, item := range itemsInProgress {
+		author := ""
+		if len(item.Media.Metadata.Authors) > 0 {
+			author = item.Media.Metadata.Authors[0].Name
+		}
+		items[i] = RecentItem{
+			ID:          item.ID,
+			Title:       item.Media.Metadata.Title,
+			Author:      author,
+			CoverURL:    fmt.Sprintf("/cover/%s", item.ID),
+			DurationSec: int(item.Media.Duration),
+			LibraryID:   item.LibraryID,
+			LibraryName: libraryNameMap[item.LibraryID],
+			LastPlayed:  item.ProgressLastUpdate,
+		}
+	}
+
+	data := map[string]interface{}{
+		"Title":             "Zuletzt gehört",
+		"ShowHeader":        true,
+		"Username":          session.ABSUsername,
+		"Items":             items,
+		"Libraries":         libraries,
+		"SelectedLibraryID": selectedLibraryID,
+		"ActiveTab":         "recent",
+	}
+
+	h.render(w, "recent.html", data)
+}
+
+// RecentItem represents an item in the "Recently Played" list.
+type RecentItem struct {
+	ID          string
+	Title       string
+	Author      string
+	CoverURL    string
+	DurationSec int
+	LibraryID   string
+	LibraryName string
+	LastPlayed  int64 // Unix timestamp
+}
+
+// HandleSeries renders the series list page with composite covers.
+func (h *LibraryHandler) HandleSeries(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	// Get library ID from query parameter
+	libraryID := r.URL.Query().Get("library")
+
+	absClient, err := h.authHandler.GetABSClientForSession(session)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Get libraries for navigation
+	libraries, _ := absClient.GetLibraries(ctx)
+
+	// Use first book library if none specified
+	if libraryID == "" {
+		for _, lib := range libraries {
+			if lib.MediaType == "book" {
+				libraryID = lib.ID
+				break
+			}
+		}
+		if libraryID == "" && len(libraries) > 0 {
+			libraryID = libraries[0].ID
+		}
+	}
+
+	// Get library name
+	libraryName := "Bibliothek"
+	for _, lib := range libraries {
+		if lib.ID == libraryID {
+			libraryName = lib.Name
+			break
+		}
+	}
+
+	// Get filter data for series list
+	filterData, err := absClient.GetFilterData(ctx, libraryID)
+	if err != nil {
+		if err == abs.ErrUnauthorized {
+			http.Redirect(w, r, "/login?error=session_expired", http.StatusSeeOther)
+			return
+		}
+		slog.Error("failed to fetch filter data", "error", err)
+		http.Error(w, "Failed to fetch series", http.StatusInternalServerError)
+		return
+	}
+
+
+	// Build series items with composite covers (limit to first 4 book covers per series)
+	seriesItems := make([]SeriesItem, 0, len(filterData.Series))
+	for _, s := range filterData.Series {
+		if s.Name == "" {
+			continue
+		}
+
+		// Fetch books for this series (limit to 4 for composite cover)
+		// ABS uses URL-safe base64 encoding for filter values
+		encodedID := base64.URLEncoding.EncodeToString([]byte(s.ID))
+		filter := fmt.Sprintf("series.%s", encodedID)
+
+		booksResp, err := absClient.GetLibraryItems(ctx, libraryID, abs.ItemsOptions{
+			Filter: filter,
+			Limit:  4,
+			Sort:   "media.metadata.title",
+		})
+		if err != nil {
+			continue
+		}
+
+		// Build cover URLs for composite
+		coverURLs := make([]string, 0, len(booksResp.Results))
+		for _, book := range booksResp.Results {
+			if book.Media.CoverPath != "" {
+				coverURLs = append(coverURLs, fmt.Sprintf("/cover/%s", book.ID))
+			}
+		}
+
+		seriesItems = append(seriesItems, SeriesItem{
+			ID:        s.ID,
+			Name:      s.Name,
+			BookCount: booksResp.Total,
+			CoverURLs: coverURLs,
+		})
+	}
+
+	data := map[string]interface{}{
+		"Title":             "Serien - " + libraryName,
+		"ShowHeader":        true,
+		"Username":          session.ABSUsername,
+		"Series":            seriesItems,
+		"Libraries":         libraries,
+		"SelectedLibraryID": libraryID,
+		"LibraryName":       libraryName,
+		"ActiveTab":         "series",
+	}
+
+	h.render(w, "series.html", data)
+}
+
+// SeriesItem represents a series with composite cover data.
+type SeriesItem struct {
+	ID        string
+	Name      string
+	BookCount int
+	CoverURLs []string // Up to 4 cover URLs for composite
+}
+
+// HandleSeriesDetail renders the detail page for a single series showing all books.
+func (h *LibraryHandler) HandleSeriesDetail(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	seriesID := r.PathValue("id")
+	if seriesID == "" {
+		http.Error(w, "Series ID required", http.StatusBadRequest)
+		return
+	}
+
+	libraryID := r.URL.Query().Get("library")
+
+	absClient, err := h.authHandler.GetABSClientForSession(session)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Get libraries for navigation
+	libraries, _ := absClient.GetLibraries(ctx)
+
+	// Use first book library if none specified
+	if libraryID == "" {
+		for _, lib := range libraries {
+			if lib.MediaType == "book" {
+				libraryID = lib.ID
+				break
+			}
+		}
+		if libraryID == "" && len(libraries) > 0 {
+			libraryID = libraries[0].ID
+		}
+	}
+
+	// Get library name
+	libraryName := "Bibliothek"
+	for _, lib := range libraries {
+		if lib.ID == libraryID {
+			libraryName = lib.Name
+			break
+		}
+	}
+
+	// Get series name from filter data
+	filterData, err := absClient.GetFilterData(ctx, libraryID)
+	if err != nil {
+		if err == abs.ErrUnauthorized {
+			http.Redirect(w, r, "/login?error=session_expired", http.StatusSeeOther)
+			return
+		}
+		http.Error(w, "Failed to fetch series data", http.StatusInternalServerError)
+		return
+	}
+
+	seriesName := "Serie"
+	for _, s := range filterData.Series {
+		if s.ID == seriesID {
+			seriesName = s.Name
+			break
+		}
+	}
+
+	// Fetch all books in the series
+	encodedID := base64.URLEncoding.EncodeToString([]byte(seriesID))
+	filter := fmt.Sprintf("series.%s", encodedID)
+
+	booksResp, err := absClient.GetLibraryItems(ctx, libraryID, abs.ItemsOptions{
+		Filter: filter,
+		Limit:  100,
+		Sort:   "media.metadata.title",
+	})
+	if err != nil {
+		if err == abs.ErrUnauthorized {
+			http.Redirect(w, r, "/login?error=session_expired", http.StatusSeeOther)
+			return
+		}
+		http.Error(w, "Failed to fetch series books", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to template-friendly format with sequence info
+	type SeriesBook struct {
+		ID          string
+		Title       string
+		Author      string
+		CoverURL    string
+		DurationSec int
+		Sequence    string
+	}
+
+	books := make([]SeriesBook, 0, len(booksResp.Results))
+	for _, item := range booksResp.Results {
+		author := ""
+		if len(item.Media.Metadata.Authors) > 0 {
+			author = item.Media.Metadata.Authors[0].Name
+		}
+
+		// Get sequence number from series metadata
+		sequence := ""
+		for _, s := range item.Media.Metadata.Series {
+			if s.ID == seriesID {
+				sequence = s.Sequence
+				break
+			}
+		}
+
+		books = append(books, SeriesBook{
+			ID:          item.ID,
+			Title:       item.Media.Metadata.Title,
+			Author:      author,
+			CoverURL:    fmt.Sprintf("/cover/%s", item.ID),
+			DurationSec: int(item.Media.Duration),
+			Sequence:    sequence,
+		})
+	}
+
+	// Sort by sequence if available (simple numeric sort)
+	sort.Slice(books, func(i, j int) bool {
+		// Parse sequences as numbers for comparison
+		seqI := parseSequence(books[i].Sequence)
+		seqJ := parseSequence(books[j].Sequence)
+		if seqI != seqJ {
+			return seqI < seqJ
+		}
+		// Fall back to title sort
+		return books[i].Title < books[j].Title
+	})
+
+	data := map[string]interface{}{
+		"Title":             seriesName + " - " + libraryName,
+		"ShowHeader":        true,
+		"Username":          session.ABSUsername,
+		"SeriesName":        seriesName,
+		"SeriesID":          seriesID,
+		"Books":             books,
+		"BookCount":         len(books),
+		"Libraries":         libraries,
+		"SelectedLibraryID": libraryID,
+		"LibraryName":       libraryName,
+		"ActiveTab":         "series",
+	}
+
+	h.render(w, "series-detail.html", data)
+}
+
+// parseSequence converts a sequence string to a sortable float.
+func parseSequence(seq string) float64 {
+	if seq == "" {
+		return 999999
+	}
+	f, err := strconv.ParseFloat(seq, 64)
+	if err != nil {
+		return 999999
+	}
+	return f
+}
+
+// AuthorItem represents an author with book count.
+type AuthorItem struct {
+	ID        string
+	Name      string
+	BookCount int
+}
+
+// HandleAuthors renders the authors list page.
+func (h *LibraryHandler) HandleAuthors(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	libraryID := r.URL.Query().Get("library")
+
+	absClient, err := h.authHandler.GetABSClientForSession(session)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	libraries, _ := absClient.GetLibraries(ctx)
+
+	if libraryID == "" {
+		for _, lib := range libraries {
+			if lib.MediaType == "book" {
+				libraryID = lib.ID
+				break
+			}
+		}
+		if libraryID == "" && len(libraries) > 0 {
+			libraryID = libraries[0].ID
+		}
+	}
+
+	libraryName := "Bibliothek"
+	for _, lib := range libraries {
+		if lib.ID == libraryID {
+			libraryName = lib.Name
+			break
+		}
+	}
+
+	filterData, err := absClient.GetFilterData(ctx, libraryID)
+	if err != nil {
+		if err == abs.ErrUnauthorized {
+			http.Redirect(w, r, "/login?error=session_expired", http.StatusSeeOther)
+			return
+		}
+		slog.Error("failed to fetch filter data", "error", err)
+		http.Error(w, "Failed to fetch authors", http.StatusInternalServerError)
+		return
+	}
+
+	// Build author items sorted by name
+	authors := make([]AuthorItem, 0, len(filterData.Authors))
+	for _, a := range filterData.Authors {
+		if a.Name == "" {
+			continue
+		}
+		authors = append(authors, AuthorItem{
+			ID:        a.ID,
+			Name:      a.Name,
+			BookCount: 0, // We don't have book counts in filter data
+		})
+	}
+
+	// Sort by name
+	sort.Slice(authors, func(i, j int) bool {
+		return authors[i].Name < authors[j].Name
+	})
+
+	data := map[string]interface{}{
+		"Title":             "Autoren - " + libraryName,
+		"ShowHeader":        true,
+		"Username":          session.ABSUsername,
+		"Authors":           authors,
+		"Libraries":         libraries,
+		"SelectedLibraryID": libraryID,
+		"LibraryName":       libraryName,
+		"ActiveTab":         "authors",
+	}
+
+	h.render(w, "authors.html", data)
+}
+
+// GenreItem represents a genre with book count.
+type GenreItem struct {
+	Name      string
+	BookCount int
+}
+
+// HandleGenres renders the genres list page.
+func (h *LibraryHandler) HandleGenres(w http.ResponseWriter, r *http.Request) {
+	session := SessionFromContext(r.Context())
+	if session == nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	libraryID := r.URL.Query().Get("library")
+
+	absClient, err := h.authHandler.GetABSClientForSession(session)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	libraries, _ := absClient.GetLibraries(ctx)
+
+	if libraryID == "" {
+		for _, lib := range libraries {
+			if lib.MediaType == "book" {
+				libraryID = lib.ID
+				break
+			}
+		}
+		if libraryID == "" && len(libraries) > 0 {
+			libraryID = libraries[0].ID
+		}
+	}
+
+	libraryName := "Bibliothek"
+	for _, lib := range libraries {
+		if lib.ID == libraryID {
+			libraryName = lib.Name
+			break
+		}
+	}
+
+	filterData, err := absClient.GetFilterData(ctx, libraryID)
+	if err != nil {
+		if err == abs.ErrUnauthorized {
+			http.Redirect(w, r, "/login?error=session_expired", http.StatusSeeOther)
+			return
+		}
+		slog.Error("failed to fetch filter data", "error", err)
+		http.Error(w, "Failed to fetch genres", http.StatusInternalServerError)
+		return
+	}
+
+	// Build genre items sorted by name
+	genres := make([]GenreItem, 0, len(filterData.Genres))
+	for _, g := range filterData.Genres {
+		if g == "" {
+			continue
+		}
+		genres = append(genres, GenreItem{
+			Name:      g,
+			BookCount: 0, // We don't have book counts in filter data
+		})
+	}
+
+	// Sort by name
+	sort.Slice(genres, func(i, j int) bool {
+		return genres[i].Name < genres[j].Name
+	})
+
+	data := map[string]interface{}{
+		"Title":             "Genres - " + libraryName,
+		"ShowHeader":        true,
+		"Username":          session.ABSUsername,
+		"Genres":            genres,
+		"Libraries":         libraries,
+		"SelectedLibraryID": libraryID,
+		"LibraryName":       libraryName,
+		"ActiveTab":         "genres",
+	}
+
+	h.render(w, "genres.html", data)
 }
 
 // HandleItem renders the item detail page.
@@ -454,6 +1036,9 @@ func (h *LibraryHandler) render(w http.ResponseWriter, name string, data interfa
 				return template.JS("[]")
 			}
 			return template.JS(b)
+		},
+		"base64": func(s string) string {
+			return base64.URLEncoding.EncodeToString([]byte(s))
 		},
 	}
 

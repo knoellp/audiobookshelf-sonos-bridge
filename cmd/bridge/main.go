@@ -192,13 +192,32 @@ func main() {
 		renderTemplate(w, templates, "login.html", data)
 	})
 
-	// Root redirect
+	// Root redirect - serves a small page that checks localStorage for saved library
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
-		http.Redirect(w, r, "/library", http.StatusSeeOther)
+		// Serve a minimal page that redirects based on localStorage
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(`<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redirecting...</title>
+<style>body{background:#121212;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif}</style>
+</head><body>
+<p>Redirecting...</p>
+<script>
+const savedLibrary = localStorage.getItem('selectedLibraryID');
+if (savedLibrary) {
+    window.location.replace('/libraries/' + savedLibrary + '/items');
+} else {
+    window.location.replace('/library');
+}
+</script>
+<noscript><meta http-equiv="refresh" content="0;url=/library"></noscript>
+</body></html>`))
 	})
 
 	// Auth endpoints
@@ -217,6 +236,11 @@ func main() {
 	// Library routes (protected)
 	mux.Handle("GET /library", auth(libraryHandler.HandleLibraries))
 	mux.Handle("GET /libraries", auth(libraryHandler.HandleLibraries))
+	mux.Handle("GET /library/recent", auth(libraryHandler.HandleRecent))
+	mux.Handle("GET /library/series", auth(libraryHandler.HandleSeries))
+	mux.Handle("GET /library/series/{id}", auth(libraryHandler.HandleSeriesDetail))
+	mux.Handle("GET /library/authors", auth(libraryHandler.HandleAuthors))
+	mux.Handle("GET /library/genres", auth(libraryHandler.HandleGenres))
 	mux.Handle("GET /libraries/{id}/items", auth(libraryHandler.HandleLibraryItems))
 	mux.Handle("GET /libraries/{id}/filterdata", auth(libraryHandler.HandleFilterData))
 	mux.Handle("GET /cover/{id}", auth(libraryHandler.HandleCover))
