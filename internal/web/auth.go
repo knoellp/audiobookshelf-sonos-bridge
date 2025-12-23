@@ -262,6 +262,12 @@ func (h *AuthHandler) encryptToken(token string) ([]byte, error) {
 	return ciphertext, nil
 }
 
+// EncryptToken encrypts a token using AES-256-GCM.
+// Exported for testing purposes.
+func (h *AuthHandler) EncryptToken(token string) ([]byte, error) {
+	return h.encryptToken(token)
+}
+
 // DecryptToken decrypts a token using AES-256-GCM.
 // This method satisfies the TokenDecrypter interface.
 func (h *AuthHandler) DecryptToken(encrypted []byte) (string, error) {

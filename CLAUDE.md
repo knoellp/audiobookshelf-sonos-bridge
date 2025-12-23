@@ -138,7 +138,7 @@ Host network mode is recommended for reliable UPnP device discovery.
 |----------|-------------|---------|
 | `BRIDGE_ABS_URL` | Audiobookshelf server URL | Required |
 | `BRIDGE_PUBLIC_URL` | Public URL for streaming | Required |
-| `BRIDGE_SESSION_SECRET` | 32+ char secret for encryption | Required |
+| `BRIDGE_SESSION_SECRET` | 32+ char secret for encryption | Auto-generated |
 | `BRIDGE_PORT` | HTTP server port | `8080` |
 | `BRIDGE_MEDIA_DIR` | Media directory inside container | `/media` |
 | `BRIDGE_CACHE_DIR` | Cache directory | `/cache` |

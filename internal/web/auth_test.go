@@ -228,11 +228,15 @@ func TestRequireAuth_ValidSession(t *testing.T) {
 	authHandler, db, _, cleanup := setupAuthTest(t)
 	defer cleanup()
 
-	// Create session
+	// Create session with properly encrypted token
 	sessionStore := store.NewSessionStore(db)
+	encryptedToken, err := authHandler.EncryptToken("abs-token-xyz")
+	if err != nil {
+		t.Fatalf("failed to encrypt token: %v", err)
+	}
 	session := &store.Session{
 		ID:          "valid-session-id",
-		ABSTokenEnc: []byte("encrypted"),
+		ABSTokenEnc: encryptedToken,
 		ABSUserID:   "user-123",
 		ABSUsername: "testuser",
 	}

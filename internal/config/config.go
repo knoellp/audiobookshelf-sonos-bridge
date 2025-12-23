@@ -1,9 +1,12 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -46,9 +49,18 @@ func Load() (*Config, error) {
 		errs = append(errs, "BRIDGE_PUBLIC_URL is required")
 	}
 
+	// Set ConfigDir early (needed for session secret auto-generation)
+	cfg.ConfigDir = getEnvOrDefault("BRIDGE_CONFIG_DIR", "/config")
+
 	cfg.SessionSecret = os.Getenv("BRIDGE_SESSION_SECRET")
 	if cfg.SessionSecret == "" {
-		errs = append(errs, "BRIDGE_SESSION_SECRET is required")
+		// Auto-generate if not provided
+		secret, err := getOrCreateSessionSecret(cfg.ConfigDir)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("failed to auto-generate session secret: %v", err))
+		} else {
+			cfg.SessionSecret = secret
+		}
 	} else if len(cfg.SessionSecret) < 32 {
 		errs = append(errs, "BRIDGE_SESSION_SECRET must be at least 32 characters")
 	}
@@ -56,7 +68,6 @@ func Load() (*Config, error) {
 	// Optional fields with defaults
 	cfg.Port = getEnvOrDefault("BRIDGE_PORT", "8080")
 	cfg.CacheDir = getEnvOrDefault("BRIDGE_CACHE_DIR", "/cache")
-	cfg.ConfigDir = getEnvOrDefault("BRIDGE_CONFIG_DIR", "/config")
 	cfg.MediaDir = getEnvOrDefault("BRIDGE_MEDIA_DIR", "/media")
 	cfg.ABSMediaPrefix = getEnvOrDefault("BRIDGE_ABS_MEDIA_PREFIX", "/audiobooks")
 	cfg.LogLevel = strings.ToLower(getEnvOrDefault("BRIDGE_LOG_LEVEL", "info"))
@@ -148,4 +159,37 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// getOrCreateSessionSecret loads the session secret from file or generates a new one.
+// The secret is persisted to configDir/session.key for stability across restarts.
+func getOrCreateSessionSecret(configDir string) (string, error) {
+	keyPath := filepath.Join(configDir, "session.key")
+
+	// Try to load existing secret
+	if data, err := os.ReadFile(keyPath); err == nil {
+		secret := strings.TrimSpace(string(data))
+		if len(secret) >= 32 {
+			return secret, nil
+		}
+	}
+
+	// Generate new secret (32 bytes = 64 hex chars)
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+	secret := hex.EncodeToString(bytes)
+
+	// Ensure config directory exists
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Save to file with secure permissions
+	if err := os.WriteFile(keyPath, []byte(secret+"\n"), 0600); err != nil {
+		return "", fmt.Errorf("failed to save session secret: %w", err)
+	}
+
+	return secret, nil
 }
