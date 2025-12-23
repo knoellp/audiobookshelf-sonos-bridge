@@ -223,6 +223,7 @@ func main() {
 	mux.Handle("GET /sonos/devices", auth(sonosHandler.HandleGetDevices))
 	mux.Handle("POST /sonos/refresh", auth(sonosHandler.HandleRefreshDevices))
 	mux.Handle("POST /sonos/quick-refresh", auth(sonosHandler.HandleQuickRefresh))
+	mux.Handle("GET /sonos/poll-groups", auth(sonosHandler.HandlePollGroups))
 
 	// Player routes (protected)
 	mux.Handle("POST /play", auth(playerHandler.HandlePlay))

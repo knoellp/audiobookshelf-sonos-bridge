@@ -254,6 +254,21 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }, 100);
     });
+
+    // Listen for group changes from polling (triggered by layout.html)
+    document.addEventListener('sonosGroupsChanged', function() {
+        console.log('Sonos groups changed (from polling), updating UI');
+        // Update group info for volume controls
+        checkGroupInfo();
+        // Update member volumes if expanded
+        if (memberVolumesExpanded) {
+            fetchMemberVolumes();
+        }
+        // Update group editor if open
+        if (groupEditorOpen) {
+            fetchAllPlayers();
+        }
+    });
 });
 
 function renderChapterMarkers() {
