@@ -154,11 +154,11 @@
     </div>
 
     <div class="transport-secondary">
-        <button type="button" class="transport-btn-secondary" onclick="stop()" title="Stop">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+        <button type="button" class="transport-btn-secondary sleep-btn" id="sleep-timer-btn" onclick="openSleepTimerModal()" title="Sleep Timer">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
             </svg>
-            Stop
+            <span id="sleep-timer-label">Sleep</span>
         </button>
         <button type="button" class="transport-btn-secondary group-btn" id="group-manage-btn" onclick="openGroupEditor()" title="Gruppe verwalten">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -169,6 +169,36 @@
             </svg>
             Gruppe
         </button>
+    </div>
+</div>
+
+<!-- Sleep Timer Modal -->
+<div class="sleep-modal-overlay" id="sleep-modal" style="display:none" onclick="closeSleepTimerOnOverlay(event)">
+    <div class="sleep-modal">
+        <div class="sleep-modal-header">
+            <h3>Sleep Timer</h3>
+            <button type="button" class="sleep-modal-close" onclick="closeSleepTimerModal()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+        <div class="sleep-modal-body">
+            <div class="sleep-countdown-display" id="sleep-countdown-display" style="display:none">
+                <span class="sleep-countdown-value" id="sleep-countdown-value">--:--</span>
+                <span class="sleep-countdown-label">verbleibend</span>
+            </div>
+            <div class="sleep-options">
+                <button type="button" class="sleep-option" data-minutes="0" onclick="setSleepTimer(0)">Aus</button>
+                <button type="button" class="sleep-option" data-minutes="15" onclick="setSleepTimer(15)">15 Min</button>
+                <button type="button" class="sleep-option" data-minutes="30" onclick="setSleepTimer(30)">30 Min</button>
+                <button type="button" class="sleep-option" data-minutes="45" onclick="setSleepTimer(45)">45 Min</button>
+                <button type="button" class="sleep-option" data-minutes="60" onclick="setSleepTimer(60)">60 Min</button>
+                <button type="button" class="sleep-option" data-minutes="90" onclick="setSleepTimer(90)">90 Min</button>
+                <button type="button" class="sleep-option" data-minutes="120" onclick="setSleepTimer(120)">120 Min</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -863,6 +893,164 @@ function updateVolumeUI(volume, muted) {
     }
     if (muted !== undefined) {
         updateMuteUI(muted);
+    }
+}
+
+// Sleep Timer functions
+let sleepTimerEndTime = null;
+let sleepCountdownInterval = null;
+let sleepTimerActive = false;
+
+function openSleepTimerModal() {
+    const modal = document.getElementById('sleep-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        updateSleepTimerModalState();
+    }
+}
+
+function closeSleepTimerModal() {
+    const modal = document.getElementById('sleep-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function closeSleepTimerOnOverlay(event) {
+    if (event.target.id === 'sleep-modal') {
+        closeSleepTimerModal();
+    }
+}
+
+async function setSleepTimer(minutes) {
+    try {
+        if (minutes === 0) {
+            // Clear the timer
+            await fetch('/sleep-timer', { method: 'DELETE' });
+            clearSleepTimerUI();
+        } else {
+            // Set the timer
+            const params = new URLSearchParams();
+            params.append('minutes', minutes);
+            const response = await fetch('/sleep-timer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: params.toString()
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.active) {
+                    activateSleepTimerUI(data.remaining_sec);
+                }
+            }
+        }
+        closeSleepTimerModal();
+    } catch (err) {
+        console.error('Failed to set sleep timer:', err);
+    }
+}
+
+function activateSleepTimerUI(remainingSec) {
+    sleepTimerActive = true;
+    sleepTimerEndTime = Date.now() + (remainingSec * 1000);
+
+    // Update button label
+    const label = document.getElementById('sleep-timer-label');
+    const btn = document.getElementById('sleep-timer-btn');
+    if (btn) btn.classList.add('active');
+
+    // Start countdown interval
+    if (sleepCountdownInterval) {
+        clearInterval(sleepCountdownInterval);
+    }
+    updateSleepCountdown();
+    sleepCountdownInterval = setInterval(updateSleepCountdown, 1000);
+
+    // Update modal state
+    updateSleepTimerModalState();
+}
+
+function updateSleepCountdown() {
+    if (!sleepTimerEndTime) return;
+
+    const remaining = Math.max(0, Math.floor((sleepTimerEndTime - Date.now()) / 1000));
+    if (remaining <= 0) {
+        clearSleepTimerUI();
+        return;
+    }
+
+    const minutes = Math.floor(remaining / 60);
+    const seconds = remaining % 60;
+    const timeStr = `${minutes}:${String(seconds).padStart(2, '0')}`;
+
+    // Update button label
+    const label = document.getElementById('sleep-timer-label');
+    if (label) {
+        label.textContent = timeStr;
+    }
+
+    // Update modal countdown if visible
+    const countdownValue = document.getElementById('sleep-countdown-value');
+    if (countdownValue) {
+        countdownValue.textContent = timeStr;
+    }
+}
+
+function clearSleepTimerUI() {
+    sleepTimerActive = false;
+    sleepTimerEndTime = null;
+
+    if (sleepCountdownInterval) {
+        clearInterval(sleepCountdownInterval);
+        sleepCountdownInterval = null;
+    }
+
+    // Reset button label
+    const label = document.getElementById('sleep-timer-label');
+    if (label) {
+        label.textContent = 'Sleep';
+    }
+
+    const btn = document.getElementById('sleep-timer-btn');
+    if (btn) btn.classList.remove('active');
+
+    // Update modal state
+    updateSleepTimerModalState();
+}
+
+function updateSleepTimerModalState() {
+    const countdownDisplay = document.getElementById('sleep-countdown-display');
+    const options = document.querySelectorAll('.sleep-option');
+
+    if (sleepTimerActive && sleepTimerEndTime) {
+        // Show countdown, highlight "Aus" option
+        if (countdownDisplay) countdownDisplay.style.display = 'flex';
+        options.forEach(opt => {
+            const mins = parseInt(opt.dataset.minutes);
+            if (mins === 0) {
+                opt.classList.add('active');
+            } else {
+                opt.classList.remove('active');
+            }
+        });
+    } else {
+        // Hide countdown, no option active
+        if (countdownDisplay) countdownDisplay.style.display = 'none';
+        options.forEach(opt => opt.classList.remove('active'));
+    }
+}
+
+// Handle sleep timer from status updates
+function updateSleepTimerFromStatus(remainingSec) {
+    if (remainingSec && remainingSec > 0) {
+        if (!sleepTimerActive) {
+            activateSleepTimerUI(remainingSec);
+        } else {
+            // Sync end time from server to avoid drift
+            sleepTimerEndTime = Date.now() + (remainingSec * 1000);
+        }
+    } else if (sleepTimerActive) {
+        clearSleepTimerUI();
     }
 }
 
@@ -1763,6 +1951,138 @@ function refreshHeaderDeviceList() {
     color: var(--text-muted);
     cursor: not-allowed;
     opacity: 0.5;
+}
+
+/* Sleep Timer Button */
+.sleep-btn.active {
+    background: rgba(29, 185, 84, 0.15);
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.sleep-btn.active:hover {
+    background: rgba(29, 185, 84, 0.25);
+}
+
+/* Sleep Timer Modal */
+.sleep-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1rem;
+}
+
+.sleep-modal {
+    background: var(--bg);
+    border-radius: 8px;
+    width: 100%;
+    max-width: 320px;
+    overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.sleep-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.sleep-modal-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text);
+}
+
+.sleep-modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 4px;
+    transition: color 0.2s, background-color 0.2s;
+}
+
+.sleep-modal-close:hover {
+    color: var(--text);
+    background: var(--bg-card);
+}
+
+.sleep-modal-body {
+    padding: 1rem;
+}
+
+.sleep-countdown-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background: rgba(29, 185, 84, 0.1);
+    border-radius: 8px;
+}
+
+.sleep-countdown-value {
+    font-size: 2rem;
+    font-weight: 600;
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.sleep-countdown-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+.sleep-options {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+}
+
+.sleep-option {
+    padding: 0.75rem 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s, color 0.2s;
+    touch-action: manipulation;
+}
+
+.sleep-option:hover {
+    background: var(--bg-hover);
+    border-color: var(--text-muted);
+}
+
+.sleep-option:active {
+    transform: scale(0.98);
+}
+
+.sleep-option.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+.sleep-option[data-minutes="0"] {
+    grid-column: span 2;
 }
 </style>
 {{end}}
