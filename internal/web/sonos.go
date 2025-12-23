@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -26,6 +27,7 @@ func NewSonosHandler(discovery *sonos.Discovery, templates *template.Template) *
 
 // HandleGetDevices returns the list of Sonos devices as HTML for htmx.
 // If no devices are in the store, it triggers automatic discovery.
+// Also refreshes group info from Sonos to ensure group sizes are current.
 func (h *SonosHandler) HandleGetDevices(w http.ResponseWriter, r *http.Request) {
 	session := SessionFromContext(r.Context())
 	if session == nil {
@@ -49,6 +51,15 @@ func (h *SonosHandler) HandleGetDevices(w http.ResponseWriter, r *http.Request) 
 			// Refresh devices from store after discovery
 			devices, _ = h.discovery.GetDevices()
 		}
+	} else {
+		// Always refresh group info to ensure current group sizes
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := h.discovery.RefreshGroupInfo(ctx); err != nil {
+			slog.Warn("HandleGetDevices: RefreshGroupInfo failed", "error", err)
+		}
+		// Re-fetch devices after refresh to get updated group sizes
+		devices, _ = h.discovery.GetDevices()
 	}
 
 	// Convert to template format
@@ -96,7 +107,11 @@ func (h *SonosHandler) HandleQuickRefresh(w http.ResponseWriter, r *http.Request
 	defer cancel()
 
 	// Quick refresh group info from ZoneGroupTopology
-	_ = h.discovery.RefreshGroupInfo(ctx)
+	if err := h.discovery.RefreshGroupInfo(ctx); err != nil {
+		slog.Warn("HandleQuickRefresh: RefreshGroupInfo failed", "error", err)
+	} else {
+		slog.Debug("HandleQuickRefresh: RefreshGroupInfo completed successfully")
+	}
 
 	// Get updated devices from store
 	devices, err := h.discovery.GetDevices()
