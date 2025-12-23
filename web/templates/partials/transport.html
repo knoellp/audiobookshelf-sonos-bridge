@@ -116,6 +116,11 @@
             </svg>
         </button>
         <span class="group-label" id="group-label" style="display:none">Gruppe</span>
+        <button type="button" class="volume-adjust-btn" onclick="adjustVolume(-1)" title="Leiser">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+        </button>
         <input type="range"
                id="volume-slider"
                class="volume-slider"
@@ -124,6 +129,12 @@
                value="50"
                oninput="onVolumeChange(this.value)"
                onchange="setVolume(this.value)">
+        <button type="button" class="volume-adjust-btn" onclick="adjustVolume(1)" title="Lauter">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+        </button>
         <span class="volume-value" id="volume-value">50%</span>
     </div>
 
@@ -666,6 +677,16 @@ function setVolume(value) {
     }, debounceTime);
 }
 
+function adjustVolume(delta) {
+    const slider = document.getElementById('volume-slider');
+    let newValue = parseInt(slider.value) + delta;
+    // Clamp to 0-100
+    newValue = Math.max(0, Math.min(100, newValue));
+    slider.value = newValue;
+    onVolumeChange(newValue);
+    setVolume(newValue);
+}
+
 async function toggleMute() {
     try {
         const response = await fetch('/transport/mute', {
@@ -867,25 +888,30 @@ async function addToGroup(playerIP) {
         });
 
         if (response.ok) {
-            // Wait for Sonos to propagate the group change
+            // Wait for Sonos to propagate the group change (increased delay)
             setTimeout(() => {
-                // Refresh the modal lists
-                fetchAllPlayers();
-                // Update group info in main UI
-                checkGroupInfo();
-                // Update member volumes if expanded
-                if (memberVolumesExpanded) {
-                    fetchMemberVolumes();
-                }
-                // Refresh header device list (HTMX)
-                refreshHeaderDeviceList();
-            }, 500);
+                refreshAfterGroupChange();
+            }, 800);
         } else {
             console.error('Failed to join group');
         }
     } catch (err) {
         console.error('Failed to add to group:', err);
     }
+}
+
+// Centralized refresh after any group change (add/remove)
+async function refreshAfterGroupChange() {
+    // Refresh the modal lists
+    await fetchAllPlayers();
+    // Update group info in main UI
+    await checkGroupInfo();
+    // Always refresh member volumes if visible (group mode)
+    if (isGroupMode && groupSize > 1) {
+        await fetchMemberVolumes();
+    }
+    // Refresh header device list (HTMX)
+    refreshHeaderDeviceList();
 }
 
 async function removeFromGroup(playerIP) {
@@ -902,17 +928,8 @@ async function removeFromGroup(playerIP) {
         if (response.ok) {
             // Wait for Sonos to propagate the group change
             setTimeout(() => {
-                // Refresh the modal lists
-                fetchAllPlayers();
-                // Update group info in main UI
-                checkGroupInfo();
-                // Update member volumes if expanded
-                if (memberVolumesExpanded) {
-                    fetchMemberVolumes();
-                }
-                // Refresh header device list (HTMX)
-                refreshHeaderDeviceList();
-            }, 500);
+                refreshAfterGroupChange();
+            }, 800);
         } else {
             console.error('Failed to leave group');
         }
@@ -1230,7 +1247,7 @@ function refreshHeaderDeviceList() {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
     margin-bottom: 1.5rem;
     padding: 0 1rem;
 }
@@ -1250,6 +1267,32 @@ function refreshHeaderDeviceList() {
 
 .volume-btn:hover {
     color: var(--text);
+}
+
+.volume-adjust-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.35rem;
+    border-radius: 4px;
+    transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+    flex-shrink: 0;
+}
+
+.volume-adjust-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--text-muted);
+}
+
+.volume-adjust-btn:active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
 }
 
 .volume-slider {

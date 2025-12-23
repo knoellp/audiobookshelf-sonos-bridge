@@ -335,12 +335,15 @@ func (d *Discovery) GetDevice(uuid string) (*store.SonosDevice, error) {
 // RefreshGroupInfo queries ZoneGroupTopology and updates group sizes in the store.
 // This is much faster than a full SSDP discovery (typically <100ms vs 5 seconds).
 func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
+	slog.Debug("RefreshGroupInfo: starting group info refresh")
+
 	devices, err := d.deviceStore.List()
 	if err != nil {
 		return fmt.Errorf("failed to list devices: %w", err)
 	}
 
 	if len(devices) == 0 {
+		slog.Debug("RefreshGroupInfo: no devices in store")
 		return nil
 	}
 
@@ -354,6 +357,7 @@ func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
 		state, err := topology.GetZoneGroupState(ctx)
 		if err == nil {
 			zoneState = state
+			slog.Debug("RefreshGroupInfo: got zone state from device", "device_ip", device.IPAddress)
 			break
 		}
 	}
@@ -365,6 +369,10 @@ func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
 	// Get updated group info
 	groupInfo := zoneState.GetGroupInfo()
 	invisibleUUIDs := zoneState.GetInvisibleUUIDs()
+
+	slog.Debug("RefreshGroupInfo: group info retrieved",
+		"group_info_count", len(groupInfo),
+		"invisible_count", len(invisibleUUIDs))
 
 	// Update each device in the store with current group info
 	for _, device := range devices {
@@ -380,10 +388,26 @@ func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
 			if info.GroupSize > 1 && !info.IsCoordinator {
 				isHidden = true
 			}
+			slog.Debug("RefreshGroupInfo: found group info for device",
+				"device_name", device.Name,
+				"normalized_uuid", normalizedUUID,
+				"new_group_size", groupSize,
+				"old_group_size", device.GroupSize,
+				"is_coordinator", info.IsCoordinator)
+		} else {
+			slog.Debug("RefreshGroupInfo: no group info for device",
+				"device_name", device.Name,
+				"normalized_uuid", normalizedUUID)
 		}
 
 		// Only update if something changed
 		if device.GroupSize != groupSize || device.IsHidden != isHidden {
+			slog.Info("RefreshGroupInfo: updating device",
+				"device_name", device.Name,
+				"old_group_size", device.GroupSize,
+				"new_group_size", groupSize,
+				"old_hidden", device.IsHidden,
+				"new_hidden", isHidden)
 			device.GroupSize = groupSize
 			device.IsHidden = isHidden
 			if err := d.deviceStore.Upsert(device); err != nil {
@@ -392,5 +416,6 @@ func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
 		}
 	}
 
+	slog.Debug("RefreshGroupInfo: completed")
 	return nil
 }
