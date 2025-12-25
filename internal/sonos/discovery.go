@@ -33,11 +33,6 @@ func NewDiscovery(deviceStore *store.DeviceStore) *Discovery {
 
 // Discover performs SSDP discovery and updates the device store.
 func (d *Discovery) Discover(ctx context.Context, timeout time.Duration) ([]Device, error) {
-	// Mark all devices as unreachable before discovery
-	if err := d.deviceStore.MarkAllUnreachable(); err != nil {
-		slog.Warn("failed to mark devices unreachable", "error", err)
-	}
-
 	// Perform SSDP M-SEARCH
 	locations, err := d.ssdpSearch(ctx, timeout)
 	if err != nil {
@@ -140,6 +135,35 @@ func (d *Discovery) Discover(ctx context.Context, timeout time.Duration) ([]Devi
 		"visible_devices", len(devices),
 		"invisible_filtered", invisibleFiltered,
 		"group_members_filtered", groupMembersFiltered)
+
+	// Mark devices as unreachable only if they were NOT found during this discovery
+	// This is safer than MarkAllUnreachable() because:
+	// 1. It only affects devices that genuinely didn't respond
+	// 2. If discovery fails completely (0 devices), no existing devices are affected
+	if len(allDevices) > 0 {
+		// Build set of found UUIDs
+		foundUUIDs := make(map[string]bool)
+		for _, device := range allDevices {
+			foundUUIDs[device.UUID] = true
+		}
+
+		// Get all existing devices and mark missing ones as unreachable
+		existingDevices, err := d.deviceStore.ListAll()
+		if err == nil {
+			for _, existing := range existingDevices {
+				if !foundUUIDs[existing.UUID] && existing.IsReachable {
+					slog.Info("marking device as unreachable (not found in discovery)",
+						"name", existing.Name,
+						"uuid", existing.UUID,
+						"ip", existing.IPAddress)
+					existing.IsReachable = false
+					if err := d.deviceStore.Upsert(existing); err != nil {
+						slog.Warn("failed to mark device unreachable", "uuid", existing.UUID, "error", err)
+					}
+				}
+			}
+		}
+	}
 
 	return devices, nil
 }
@@ -337,7 +361,9 @@ func (d *Discovery) GetDevice(uuid string) (*store.SonosDevice, error) {
 func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
 	slog.Debug("RefreshGroupInfo: starting group info refresh")
 
-	devices, err := d.deviceStore.List()
+	// Use ListAll to include hidden devices - they may need to become visible again
+	// (e.g., stereo pair master that was incorrectly marked as hidden)
+	devices, err := d.deviceStore.ListAll()
 	if err != nil {
 		return fmt.Errorf("failed to list devices: %w", err)
 	}

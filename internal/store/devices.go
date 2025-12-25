@@ -221,9 +221,47 @@ func (s *DeviceStore) Delete(uuid string) error {
 	return err
 }
 
-// MarkAllUnreachable marks all devices as unreachable (used before discovery scan).
-func (s *DeviceStore) MarkAllUnreachable() error {
-	query := `UPDATE sonos_devices SET is_reachable = 0`
-	_, err := s.db.Exec(query)
-	return err
+// ListAll returns all Sonos devices including hidden ones (for internal use).
+func (s *DeviceStore) ListAll() ([]*SonosDevice, error) {
+	query := `
+		SELECT uuid, name, ip_address, location_url, model, is_reachable, COALESCE(is_hidden, 0), COALESCE(group_size, 1), discovered_at, last_seen_at
+		FROM sonos_devices ORDER BY name
+	`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []*SonosDevice
+	for rows.Next() {
+		var device SonosDevice
+		var isReachable, isHidden, groupSize int
+		var discoveredAt, lastSeenAt int64
+
+		err := rows.Scan(
+			&device.UUID,
+			&device.Name,
+			&device.IPAddress,
+			&device.LocationURL,
+			&device.Model,
+			&isReachable,
+			&isHidden,
+			&groupSize,
+			&discoveredAt,
+			&lastSeenAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		device.IsReachable = isReachable == 1
+		device.IsHidden = isHidden == 1
+		device.GroupSize = groupSize
+		device.DiscoveredAt = time.Unix(discoveredAt, 0)
+		device.LastSeenAt = time.Unix(lastSeenAt, 0)
+		devices = append(devices, &device)
+	}
+
+	return devices, rows.Err()
 }
