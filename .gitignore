@@ -112,7 +112,8 @@ test-results/
 # E2E test files (local testing only)
 e2e-test*.js
 
-# Claude Code / Speckit tooling (not project-specific)
+# Tooling config (not project-specific)
 .claude/
+!.claude/CLAUDE.md
 .specify/
 GEMINI.md
