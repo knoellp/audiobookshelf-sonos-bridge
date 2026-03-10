@@ -1189,8 +1189,13 @@ func (h *PlayerHandler) HandlePlayer(w http.ResponseWriter, r *http.Request) {
 	// Get playback session
 	playback, _ := h.playbackStore.GetBySessionID(session.ID)
 
+	// If playback session belongs to a different item, discard it
+	if playback != nil && playback.ItemID != itemID {
+		playback = nil
+	}
+
 	// If no playback session for THIS item, use ABS progress as initial position
-	if playback == nil || playback.ItemID != itemID {
+	if playback == nil {
 		progress, err := absClient.GetProgress(ctx, itemID)
 		if err == nil && progress != nil && progress.CurrentTime > 0 {
 			playback = &store.PlaybackSession{
