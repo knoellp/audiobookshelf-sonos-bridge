@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"time"
 
 	"audiobookshelf-sonos-bridge/internal/abs"
@@ -11,15 +12,13 @@ import (
 
 // WarmupConfig configures the cache warmup job.
 type WarmupConfig struct {
-	Interval       time.Duration
-	BatchSize      int
-	MaxConcurrent  int
+	Interval      time.Duration
+	MaxConcurrent int
 }
 
 // DefaultWarmupConfig provides sensible defaults for cache warmup.
 var DefaultWarmupConfig = WarmupConfig{
 	Interval:      1 * time.Hour,
-	BatchSize:     10,
 	MaxConcurrent: 2,
 }
 
@@ -30,13 +29,14 @@ type TokenDecrypter interface {
 
 // WarmupJob handles background cache warming.
 type WarmupJob struct {
-	index         *Index
-	worker        *Worker
-	absClient     *abs.Client
-	sessionStore  *store.SessionStore
-	tokenDecrypt  TokenDecrypter
-	config        WarmupConfig
-	cancel        context.CancelFunc
+	index        *Index
+	worker       *Worker
+	absClient    *abs.Client
+	sessionStore *store.SessionStore
+	tokenDecrypt TokenDecrypter
+	pathMapper   func(string) string
+	config       WarmupConfig
+	cancel       context.CancelFunc
 }
 
 // NewWarmupJob creates a new cache warmup job.
@@ -46,6 +46,7 @@ func NewWarmupJob(
 	absClient *abs.Client,
 	sessionStore *store.SessionStore,
 	tokenDecrypt TokenDecrypter,
+	pathMapper func(string) string,
 	config WarmupConfig,
 ) *WarmupJob {
 	return &WarmupJob{
@@ -54,6 +55,7 @@ func NewWarmupJob(
 		absClient:    absClient,
 		sessionStore: sessionStore,
 		tokenDecrypt: tokenDecrypt,
+		pathMapper:   pathMapper,
 		config:       config,
 	}
 }
@@ -140,79 +142,138 @@ func (j *WarmupJob) run(ctx context.Context) {
 		}
 
 		queued += j.warmLibrary(ctx, client, lib.ID)
-
-		if queued >= j.config.BatchSize {
-			break
-		}
 	}
 
 	slog.Info("cache warmup run complete", "queued", queued)
 }
 
-// warmLibrary queues items from a library for transcoding.
+// warmLibrary paginates through all items in a library and queues uncached ones.
 func (j *WarmupJob) warmLibrary(ctx context.Context, client *abs.Client, libraryID string) int {
-	// Get library items
-	items, err := client.GetLibraryItems(ctx, libraryID, abs.ItemsOptions{
-		Limit: j.config.BatchSize,
-		Sort:  "addedAt",
-		Desc:  true, // Newest first
-	})
-	if err != nil {
-		slog.Error("failed to get library items", "library_id", libraryID, "error", err)
-		return 0
-	}
+	const pageSize = 50
+	const earlyExitThreshold = 20 // stop after N consecutive cached items
 
 	queued := 0
-	for _, item := range items.Results {
-		// Check if already cached
-		cached, err := j.index.IsCached(item.ID)
+	consecutiveCached := 0
+	page := 0
+
+	for {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			return queued
+		default:
+		}
+
+		items, err := client.GetLibraryItems(ctx, libraryID, abs.ItemsOptions{
+			Limit: pageSize,
+			Page:  page,
+			Sort:  "addedAt",
+			Desc:  true, // Newest first
+		})
 		if err != nil {
-			continue
-		}
-		if cached {
-			continue
+			slog.Error("failed to get library items", "library_id", libraryID, "page", page, "error", err)
+			return queued
 		}
 
-		// Check current status
-		status, _ := j.index.GetStatus(item.ID)
-		if status == store.CacheStatusInProgress {
-			continue // Already being processed
+		if len(items.Results) == 0 {
+			break // No more items
 		}
 
-		// Get source path
-		audioFile := item.GetPrimaryAudioFile()
-		if audioFile == nil {
-			continue
-		}
-
-		sourcePath := audioFile.Metadata.Path
-		if sourcePath == "" {
-			continue
-		}
-
-		// Create cache entry if needed
-		entry, _ := j.index.GetEntry(item.ID)
-		if entry == nil {
-			if err := j.index.CreateEntry(item.ID, sourcePath, 0, time.Now()); err != nil {
-				slog.Warn("failed to create cache entry", "item_id", item.ID, "error", err)
+		for _, item := range items.Results {
+			// Check if already cached
+			cached, err := j.index.IsCached(item.ID)
+			if err != nil {
 				continue
+			}
+
+			if cached {
+				consecutiveCached++
+				if consecutiveCached >= earlyExitThreshold {
+					slog.Info("warmup early exit: reached consecutive cached threshold",
+						"library_id", libraryID,
+						"threshold", earlyExitThreshold,
+						"queued", queued,
+						"page", page)
+					return queued
+				}
+				continue
+			}
+
+			// Reset consecutive counter on uncached item
+			consecutiveCached = 0
+
+			// Check current status
+			status, _ := j.index.GetStatus(item.ID)
+			if status == store.CacheStatusInProgress {
+				continue // Already being processed
+			}
+
+			// Retry failed items only if last attempt was > 1 hour ago
+			if status == store.CacheStatusFailed {
+				entry, _ := j.index.GetEntry(item.ID)
+				if entry != nil && time.Since(entry.UpdatedAt) < 1*time.Hour {
+					continue // Too recent, skip for now
+				}
+			}
+
+			// Get full item details for multi-file support
+			fullItem, err := client.GetItem(ctx, item.ID)
+			if err != nil {
+				slog.Warn("failed to get item details for warmup", "item_id", item.ID, "error", err)
+				continue
+			}
+
+			if len(fullItem.Media.AudioFiles) == 0 {
+				continue
+			}
+
+			// Sort audio files by index and map paths
+			audioFiles := make([]abs.AudioFile, len(fullItem.Media.AudioFiles))
+			copy(audioFiles, fullItem.Media.AudioFiles)
+			sort.Slice(audioFiles, func(i, k int) bool {
+				return audioFiles[i].Index < audioFiles[k].Index
+			})
+
+			sourcePaths := make([]string, 0, len(audioFiles))
+			for _, af := range audioFiles {
+				if af.Metadata.Path == "" {
+					continue
+				}
+				sourcePaths = append(sourcePaths, j.pathMapper(af.Metadata.Path))
+			}
+			if len(sourcePaths) == 0 {
+				continue
+			}
+
+			// Create cache entry if needed
+			entry, _ := j.index.GetEntry(item.ID)
+			if entry == nil {
+				if err := j.index.CreateEntry(item.ID, sourcePaths[0], 0, time.Now()); err != nil {
+					slog.Warn("failed to create cache entry", "item_id", item.ID, "error", err)
+					continue
+				}
+			}
+
+			// Queue for transcoding with all source paths
+			job := Job{
+				ItemID:      item.ID,
+				SourcePaths: sourcePaths,
+			}
+
+			if j.worker.Enqueue(job) {
+				queued++
+				slog.Debug("queued item for cache warmup",
+					"item_id", item.ID,
+					"files", len(sourcePaths))
 			}
 		}
 
-		// Queue for transcoding
-		job := Job{
-			ItemID:     item.ID,
-			SourcePath: sourcePath,
-		}
-
-		if j.worker.Enqueue(job) {
-			queued++
-			slog.Debug("queued item for cache warmup", "item_id", item.ID)
-		}
-
-		if queued >= j.config.BatchSize {
+		// Check if we've reached the last page
+		if len(items.Results) < pageSize {
 			break
 		}
+
+		page++
 	}
 
 	return queued

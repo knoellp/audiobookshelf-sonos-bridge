@@ -26,15 +26,16 @@ type PathMapper func(absPath string) string
 
 // PlayerHandler handles playback-related requests.
 type PlayerHandler struct {
-	authHandler   *AuthHandler
-	cacheIndex    *cache.Index
-	cacheWorker   *cache.Worker
-	tokenGen      *stream.TokenGenerator
-	publicURL     string
-	templates     *template.Template
-	sonosStore    *store.DeviceStore
-	playbackStore *store.PlaybackStore
-	pathMapper    PathMapper
+	authHandler    *AuthHandler
+	cacheIndex     *cache.Index
+	cacheWorker    *cache.Worker
+	tokenGen       *stream.TokenGenerator
+	publicURL      string
+	templates      *template.Template
+	sonosStore     *store.DeviceStore
+	playbackStore  *store.PlaybackStore
+	pathMapper     PathMapper
+	progressSyncer *ProgressSyncer
 }
 
 // NewPlayerHandler creates a new player handler.
@@ -48,17 +49,19 @@ func NewPlayerHandler(
 	sonosStore *store.DeviceStore,
 	playbackStore *store.PlaybackStore,
 	pathMapper PathMapper,
+	progressSyncer *ProgressSyncer,
 ) *PlayerHandler {
 	return &PlayerHandler{
-		authHandler:   authHandler,
-		cacheIndex:    cacheIndex,
-		cacheWorker:   cacheWorker,
-		tokenGen:      tokenGen,
-		publicURL:     publicURL,
-		templates:     templates,
-		sonosStore:    sonosStore,
-		playbackStore: playbackStore,
-		pathMapper:    pathMapper,
+		authHandler:    authHandler,
+		cacheIndex:     cacheIndex,
+		cacheWorker:    cacheWorker,
+		tokenGen:       tokenGen,
+		publicURL:      publicURL,
+		templates:      templates,
+		sonosStore:     sonosStore,
+		playbackStore:  playbackStore,
+		pathMapper:     pathMapper,
+		progressSyncer: progressSyncer,
 	}
 }
 
@@ -333,6 +336,16 @@ func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Extract author name(s) for now-playing display
+	var authorName string
+	if len(item.Media.Metadata.Authors) > 0 {
+		names := make([]string, 0, len(item.Media.Metadata.Authors))
+		for _, a := range item.Media.Metadata.Authors {
+			names = append(names, a.Name)
+		}
+		authorName = strings.Join(names, ", ")
+	}
+
 	// Create/update playback session
 	playbackSession := &store.PlaybackSession{
 		ID:                 generateID(),
@@ -347,6 +360,8 @@ func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 		SegmentDurationSec: segmentDurationSec,
 		StartedAt:          time.Now(),
 		LastPositionUpdate: time.Now(),
+		ItemTitle:          item.Media.Metadata.Title,
+		ItemAuthor:         authorName,
 	}
 
 	if err := h.playbackStore.Create(playbackSession); err != nil {
@@ -952,14 +967,24 @@ func (h *PlayerHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("failed to get position info", "error", err)
 		// Return stored values
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		fallback := map[string]interface{}{
 			"active":       true,
 			"item_id":      playback.ItemID,
 			"is_playing":   isPlaying,
 			"position_sec": playback.PositionSec,
 			"duration_sec": playback.DurationSec,
-		})
+			"title":        playback.ItemTitle,
+			"author":       playback.ItemAuthor,
+			"cover_url":    "/cover/" + playback.ItemID,
+		}
+		if playback.SleepAt != nil {
+			remaining := int(time.Until(*playback.SleepAt).Seconds())
+			if remaining > 0 {
+				fallback["sleep_timer_remaining_sec"] = remaining
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(fallback)
 		return
 	}
 
@@ -1026,11 +1051,28 @@ func (h *PlayerHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		"duration_str": formatDurationSec(durationSec),
 		"volume":       volume,
 		"muted":        muted,
+		"title":        playback.ItemTitle,
+		"author":       playback.ItemAuthor,
+		"cover_url":    "/cover/" + playback.ItemID,
 	}
 	if sleepTimerRemainingSec != nil {
 		response["sleep_timer_remaining_sec"] = *sleepTimerRemainingSec
 	}
 	json.NewEncoder(w).Encode(response)
+}
+
+// HandleSyncProgress handles POST /sync-progress requests.
+// Forces an immediate progress sync to Audiobookshelf for the current session.
+func (h *PlayerHandler) HandleSyncProgress(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r.Context())
+	if session == nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if h.progressSyncer != nil {
+		h.progressSyncer.SyncNow(r.Context(), session.ID)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleSegmentTransition handles the transition to the next segment.

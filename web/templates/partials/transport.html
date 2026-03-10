@@ -953,6 +953,7 @@ async function setSleepTimer(minutes) {
 function activateSleepTimerUI(remainingSec) {
     sleepTimerActive = true;
     sleepTimerEndTime = Date.now() + (remainingSec * 1000);
+    localStorage.setItem('sleepTimerEndTime', sleepTimerEndTime);
 
     // Update button label
     const label = document.getElementById('sleep-timer-label');
@@ -999,6 +1000,7 @@ function updateSleepCountdown() {
 function clearSleepTimerUI() {
     sleepTimerActive = false;
     sleepTimerEndTime = null;
+    localStorage.removeItem('sleepTimerEndTime');
 
     if (sleepCountdownInterval) {
         clearInterval(sleepCountdownInterval);
@@ -1053,6 +1055,20 @@ function updateSleepTimerFromStatus(remainingSec) {
         clearSleepTimerUI();
     }
 }
+
+// Restore sleep timer from localStorage on page load
+(function() {
+    var saved = localStorage.getItem('sleepTimerEndTime');
+    if (saved) {
+        var endTime = parseFloat(saved);
+        var remaining = Math.floor((endTime - Date.now()) / 1000);
+        if (remaining > 0) {
+            activateSleepTimerUI(remaining);
+        } else {
+            localStorage.removeItem('sleepTimerEndTime');
+        }
+    }
+})();
 
 // Group Editor functions
 let groupEditorOpen = false;

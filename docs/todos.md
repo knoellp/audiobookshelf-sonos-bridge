@@ -485,3 +485,111 @@ CLIENT (kann offline gehen)
 | `internal/web/player.go` | Neue Handler + Status-Erweiterung |
 | `cmd/bridge/main.go` | Worker starten |
 | `web/templates/partials/transport.html` | Button + Modal + JS |
+
+---
+
+## Issue 15: Library Filter & Navigation - IN PROGRESS
+
+**Erstellt:** 2025-12-23
+
+### Beschreibung
+Erweiterte Bibliotheksnavigation mit globaler Multi-Library-Unterstützung und Filteroptionen nach Serien, Autoren und Genres. Composite-Cover für Serien (2x2 Grid aus ersten 4 Büchern).
+
+### Architektur
+
+```
+/library
+├── [Zuletzt gehört] - Global über alle Bibliotheken
+├── [Serien] [Autoren] [Genres] - Per-Library mit Dropdown
+│
+└── Library Dropdown: "Alle" | "Hörbücher" | "Podcasts" | ...
+```
+
+### Phase 1: Navigation Foundation - ERLEDIGT
+
+| # | Task | Status |
+|---|------|--------|
+| 15.1 | Layout-Struktur: Header mit Tabs (Desktop) / Burger (Mobile) | [x] |
+| 15.2 | Library-Dropdown im Header (rechts neben Tabs) | [x] |
+| 15.3 | Responsive CSS (Breakpoint 768px) | [x] |
+| 15.4 | JavaScript: Burger-Toggle, Library-Switching, localStorage | [x] |
+| 15.5 | Handler: Nav-Daten in bestehende Handler integriert | [x] |
+
+### Phase 2: Zuletzt gehört (Global) - ERLEDIGT
+
+| # | Task | Status |
+|---|------|--------|
+| 15.6 | ABS Client: `GetItemsInProgress()` implementieren | [x] |
+| 15.7 | Handler: `HandleRecent()` - Items aus allen Libraries | [x] |
+| 15.8 | Template: `recent.html` mit Library-Badges | [x] |
+| 15.9 | CSS: Grid-Layout mit Library-Badges | [x] |
+
+### Phase 3: Serien mit Composite Cover - ERLEDIGT
+
+| # | Task | Status |
+|---|------|--------|
+| 15.10 | CSS Grid für Composite Cover (1-4 Bücher Layout) | [x] |
+| 15.11 | Handler: `HandleSeries()` - Gruppiert nach Serien | [x] |
+| 15.12 | Custom JSON Unmarshaler für Series (Array/Object) | [x] |
+| 15.13 | Series-Detail View mit Sequence-Sortierung | [x] |
+| 15.14 | Test: Composite Covers für 1/2/3/4+ Bücher | [x] |
+
+### Phase 4: Autoren + Genres
+
+| # | Task | Status |
+|---|------|--------|
+| 15.15 | Handler: `HandleAuthors()` - Alphabetisch gruppiert | [ ] |
+| 15.16 | Handler: `HandleGenres()` - Leere Genres ausblenden | [ ] |
+| 15.17 | Template: Author-Liste mit Buchstaben-Sektionen | [ ] |
+| 15.18 | Template: Genre-Tiles mit Cover | [ ] |
+
+### Composite Cover Design
+
+```
+┌─────────────────┐
+│ ┌─────┬─────┐   │  4 Bücher: 2x2 Grid
+│ │ B1  │ B2  │   │
+│ ├─────┼─────┤   │
+│ │ B3  │ B4  │   │
+│ └─────┴─────┘   │
+└─────────────────┘
+
+┌─────────────────┐
+│ ┌─────┬─────┐   │  3 Bücher: 2 oben, 1 unten zentriert
+│ │ B1  │ B2  │   │
+│ └──┬──┴──┬──┘   │
+│    │ B3  │      │
+│    └─────┘      │
+└─────────────────┘
+
+┌─────────────────┐
+│    ┌─────┐      │  1-2 Bücher: Einzeln oder nebeneinander
+│    │ B1  │      │
+│    └─────┘      │
+└─────────────────┘
+```
+
+### Caching-Strategie
+
+| Daten | Cache-Dauer | Invalidierung |
+|-------|-------------|---------------|
+| Libraries | Session | Bei Login |
+| FilterData (Series/Authors/Genres) | 5 Min | Wenn Buchanzahl sich ändert |
+| Items in Progress | 1 Min | - |
+
+### Geänderte/Neue Dateien
+
+| Datei | Änderung |
+|-------|----------|
+| `web/templates/layout.html` | Globale Navigation hinzufügen |
+| `web/templates/partials/nav.html` | **NEU**: Wiederverwendbare Navigation |
+| `web/templates/recent.html` | **NEU**: Zuletzt gehört Template |
+| `web/templates/series.html` | **NEU**: Serien-Übersicht mit Composite Covers |
+| `web/templates/series-detail.html` | **NEU**: Serie-Detail mit Sequence-Badges |
+| `web/templates/authors.html` | **NEU**: Autoren-Liste |
+| `web/templates/genres.html` | **NEU**: Genre-Tiles |
+| `internal/web/library.go` | Neue Handler: HandleRecent, HandleSeries, HandleSeriesDetail |
+| `internal/abs/client.go` | `GetItemsInProgress()` Methode |
+| `internal/abs/types.go` | SeriesList mit Custom UnmarshalJSON |
+| `web/static/style.css` | Composite Cover CSS, Responsive Nav |
+| `cmd/bridge/main.go` | Neue Routes: /library/recent, /library/series, /library/series/{id} |

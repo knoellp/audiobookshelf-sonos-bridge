@@ -1,7 +1,7 @@
 {{define "item-grid"}}
 <div class="items-grid {{if eq .View "list"}}list-view{{end}}">
     {{range .Items}}
-    <a href="/item/{{.ID}}" class="item-card" data-item-id="{{.ID}}">
+    <a href="/player/{{.ID}}" class="item-card" data-item-id="{{.ID}}">
         <div class="item-cover-container">
             <div class="item-cover">
                 {{if .CoverURL}}
@@ -150,7 +150,7 @@ a.item-card:hover {
 
 {{define "item-cards-append"}}
 {{range .Items}}
-<a href="/item/{{.ID}}" class="item-card" data-item-id="{{.ID}}">
+<a href="/player/{{.ID}}" class="item-card" data-item-id="{{.ID}}">
     <div class="item-cover-container">
         <div class="item-cover">
             {{if .CoverURL}}

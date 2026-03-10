@@ -22,6 +22,8 @@ type PlaybackSession struct {
 	LastPositionUpdate  time.Time
 	ABSProgressSyncedAt time.Time
 	SleepAt             *time.Time // Unix timestamp when sleep timer should trigger (nil = no timer)
+	ItemTitle           string     // Book title for now-playing display
+	ItemAuthor          string     // Book author for now-playing display
 }
 
 // PlaybackStore provides CRUD operations for playback sessions.
@@ -37,8 +39,8 @@ func NewPlaybackStore(db *DB) *PlaybackStore {
 // Create inserts a new playback session.
 func (s *PlaybackStore) Create(ps *PlaybackSession) error {
 	query := `
-		INSERT INTO playback_sessions (id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO playback_sessions (id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, item_title, item_author)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	isPlaying := 0
 	if ps.IsPlaying {
@@ -59,6 +61,8 @@ func (s *PlaybackStore) Create(ps *PlaybackSession) error {
 		ps.StartedAt.Unix(),
 		ps.LastPositionUpdate.Unix(),
 		ps.ABSProgressSyncedAt.Unix(),
+		ps.ItemTitle,
+		ps.ItemAuthor,
 	)
 	return err
 }
@@ -66,7 +70,7 @@ func (s *PlaybackStore) Create(ps *PlaybackSession) error {
 // Get retrieves a playback session by ID.
 func (s *PlaybackStore) Get(id string) (*PlaybackSession, error) {
 	query := `
-		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at
+		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at, item_title, item_author
 		FROM playback_sessions WHERE id = ?
 	`
 	row := s.db.QueryRow(query, id)
@@ -76,7 +80,7 @@ func (s *PlaybackStore) Get(id string) (*PlaybackSession, error) {
 // GetBySessionID retrieves the active playback session for a web session.
 func (s *PlaybackStore) GetBySessionID(sessionID string) (*PlaybackSession, error) {
 	query := `
-		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at
+		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at, item_title, item_author
 		FROM playback_sessions WHERE session_id = ? ORDER BY started_at DESC LIMIT 1
 	`
 	row := s.db.QueryRow(query, sessionID)
@@ -86,7 +90,7 @@ func (s *PlaybackStore) GetBySessionID(sessionID string) (*PlaybackSession, erro
 // GetByToken retrieves a playback session by stream token.
 func (s *PlaybackStore) GetByToken(token string) (*PlaybackSession, error) {
 	query := `
-		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at
+		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at, item_title, item_author
 		FROM playback_sessions WHERE stream_token = ?
 	`
 	row := s.db.QueryRow(query, token)
@@ -163,7 +167,7 @@ func (s *PlaybackStore) UpdatePositionAndSegment(id string, positionSec int, seg
 // ListActive returns all currently playing sessions.
 func (s *PlaybackStore) ListActive() ([]*PlaybackSession, error) {
 	query := `
-		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at
+		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at, item_title, item_author
 		FROM playback_sessions WHERE is_playing = 1 ORDER BY started_at DESC
 	`
 	rows, err := s.db.Query(query)
@@ -178,7 +182,7 @@ func (s *PlaybackStore) ListActive() ([]*PlaybackSession, error) {
 // ListAll returns all playback sessions.
 func (s *PlaybackStore) ListAll() ([]*PlaybackSession, error) {
 	query := `
-		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at
+		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at, item_title, item_author
 		FROM playback_sessions ORDER BY started_at DESC
 	`
 	rows, err := s.db.Query(query)
@@ -229,7 +233,7 @@ func (s *PlaybackStore) ClearSleepTimer(id string) error {
 // GetSessionsWithActiveTimer returns all sessions that have an active sleep timer.
 func (s *PlaybackStore) GetSessionsWithActiveTimer() ([]*PlaybackSession, error) {
 	query := `
-		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at
+		SELECT id, session_id, item_id, sonos_uuid, stream_token, position_sec, duration_sec, current_segment, segment_duration_sec, is_playing, started_at, last_position_update, abs_progress_synced_at, sleep_at, item_title, item_author
 		FROM playback_sessions WHERE sleep_at IS NOT NULL ORDER BY sleep_at ASC
 	`
 	rows, err := s.db.Query(query)
@@ -246,6 +250,7 @@ func (s *PlaybackStore) scanRow(row *sql.Row) (*PlaybackSession, error) {
 	var isPlaying int
 	var currentSegment, segmentDurationSec, sleepAt sql.NullInt64
 	var startedAt, lastPositionUpdate, absSyncedAt int64
+	var itemTitle, itemAuthor sql.NullString
 
 	err := row.Scan(
 		&ps.ID,
@@ -262,6 +267,8 @@ func (s *PlaybackStore) scanRow(row *sql.Row) (*PlaybackSession, error) {
 		&lastPositionUpdate,
 		&absSyncedAt,
 		&sleepAt,
+		&itemTitle,
+		&itemAuthor,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -284,6 +291,12 @@ func (s *PlaybackStore) scanRow(row *sql.Row) (*PlaybackSession, error) {
 		t := time.Unix(sleepAt.Int64, 0)
 		ps.SleepAt = &t
 	}
+	if itemTitle.Valid {
+		ps.ItemTitle = itemTitle.String
+	}
+	if itemAuthor.Valid {
+		ps.ItemAuthor = itemAuthor.String
+	}
 
 	return &ps, nil
 }
@@ -295,6 +308,7 @@ func (s *PlaybackStore) scanRows(rows *sql.Rows) ([]*PlaybackSession, error) {
 		var isPlaying int
 		var currentSegment, segmentDurationSec, sleepAt sql.NullInt64
 		var startedAt, lastPositionUpdate, absSyncedAt int64
+		var itemTitle, itemAuthor sql.NullString
 
 		err := rows.Scan(
 			&ps.ID,
@@ -311,6 +325,8 @@ func (s *PlaybackStore) scanRows(rows *sql.Rows) ([]*PlaybackSession, error) {
 			&lastPositionUpdate,
 			&absSyncedAt,
 			&sleepAt,
+			&itemTitle,
+			&itemAuthor,
 		)
 		if err != nil {
 			return nil, err
@@ -329,6 +345,12 @@ func (s *PlaybackStore) scanRows(rows *sql.Rows) ([]*PlaybackSession, error) {
 		if sleepAt.Valid {
 			t := time.Unix(sleepAt.Int64, 0)
 			ps.SleepAt = &t
+		}
+		if itemTitle.Valid {
+			ps.ItemTitle = itemTitle.String
+		}
+		if itemAuthor.Valid {
+			ps.ItemAuthor = itemAuthor.String
 		}
 		sessions = append(sessions, &ps)
 	}

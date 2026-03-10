@@ -440,7 +440,7 @@ Base64-kodiert (URL-safe, ohne Padding).
 
 ### Architektur-Entscheidungen
 
-Laut `CLAUDE.md` verwendet unser Projekt **UPnP für Sonos-Steuerung**. Die offizielle Sonos Cloud API bietet jedoch einige Vorteile:
+Unser Projekt verwendet **UPnP für Sonos-Steuerung**. Die offizielle Sonos Cloud API bietet jedoch einige Vorteile:
 
 | Aspekt | UPnP (lokal) | Cloud API |
 |--------|--------------|-----------|
@@ -467,7 +467,7 @@ Für unser Audiobookshelf-Projekt empfehlen sich:
 
 ### Sicherheitsaspekte
 
-Wie in `CLAUDE.md` definiert:
+Sicherheitskonzept:
 - Streaming-Endpoints nutzen kurzlebige, session-spezifische Tokens
 - Audiobookshelf-Credentials bleiben serverseitig
 - Niemals an Sonos exponieren

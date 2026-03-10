@@ -30,7 +30,7 @@ func NewWorker(index *Index, transcoder *Transcoder, workers int) *Worker {
 	return &Worker{
 		index:      index,
 		transcoder: transcoder,
-		jobs:       make(chan Job, 100), // Buffer for 100 jobs
+		jobs:       make(chan Job, 500), // Buffer for 500 jobs
 		workers:    workers,
 	}
 }

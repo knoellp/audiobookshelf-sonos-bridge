@@ -131,6 +131,9 @@ func main() {
 	// Initialize Sonos discovery
 	discovery := sonos.NewDiscovery(deviceStore)
 
+	// Initialize progress syncer
+	progressSyncer := web.NewProgressSyncer(absClient, playbackStore, sessionStore, deviceStore, authHandler)
+
 	// Initialize handlers
 	libraryHandler := web.NewLibraryHandler(authHandler, templates, cacheStore)
 	sonosHandler := web.NewSonosHandler(discovery, templates)
@@ -144,10 +147,8 @@ func main() {
 		deviceStore,
 		playbackStore,
 		cfg.MapABSPathToLocal,
+		progressSyncer,
 	)
-
-	// Initialize progress syncer
-	progressSyncer := web.NewProgressSyncer(absClient, playbackStore, sessionStore, deviceStore, authHandler)
 
 	// Initialize sleep timer worker
 	sleepTimerWorker := web.NewSleepTimerWorker(playbackStore, sessionStore, deviceStore, absClient, authHandler)
@@ -159,6 +160,7 @@ func main() {
 		absClient,
 		sessionStore,
 		authHandler,
+		cfg.MapABSPathToLocal,
 		cache.DefaultWarmupConfig,
 	)
 
@@ -280,6 +282,9 @@ if (savedLibrary) {
 	mux.Handle("GET /sonos/all-players", auth(playerHandler.HandleGetAllPlayers))
 	mux.Handle("POST /sonos/group/join", auth(playerHandler.HandleJoinGroup))
 	mux.Handle("POST /sonos/group/leave", auth(playerHandler.HandleLeaveGroup))
+
+	// Progress sync route (protected)
+	mux.Handle("POST /sync-progress", auth(playerHandler.HandleSyncProgress))
 
 	// Sleep timer routes (protected)
 	mux.Handle("POST /sleep-timer", auth(playerHandler.HandleSetSleepTimer))

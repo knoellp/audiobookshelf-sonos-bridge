@@ -209,6 +209,38 @@ func (db *DB) runIncrementalMigrations() error {
 		}
 	}
 
+	// Add item_title column to playback_sessions if not exists
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('playback_sessions') WHERE name = 'item_title'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check item_title column: %w", err)
+	}
+
+	if count == 0 {
+		slog.Info("migrating playback_sessions: adding item_title column")
+		_, err := db.conn.Exec(`ALTER TABLE playback_sessions ADD COLUMN item_title TEXT DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("failed to add item_title column: %w", err)
+		}
+	}
+
+	// Add item_author column to playback_sessions if not exists
+	err = db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('playback_sessions') WHERE name = 'item_author'
+	`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check item_author column: %w", err)
+	}
+
+	if count == 0 {
+		slog.Info("migrating playback_sessions: adding item_author column")
+		_, err := db.conn.Exec(`ALTER TABLE playback_sessions ADD COLUMN item_author TEXT DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("failed to add item_author column: %w", err)
+		}
+	}
+
 	return nil
 }
 

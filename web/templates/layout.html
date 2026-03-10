@@ -12,7 +12,7 @@
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <link rel="apple-touch-icon" sizes="512x512" href="/static/audiobookshelf-bridge-WebApp-Icon.png">
     <title>{{if .Title}}{{.Title}} - {{end}}Audiobookshelf Sonos Bridge</title>
-    <link rel="stylesheet" href="/static/style.css?v=10">
+    <link rel="stylesheet" href="/static/style.css?v=11">
     <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
@@ -287,9 +287,118 @@
     </script>
     {{end}}
 
-    <main class="main-content">
+    <main class="main-content" id="main-content">
         {{block "content" .}}{{end}}
     </main>
+
+    {{if .Username}}
+    <!-- Now Playing Bar -->
+    <div id="now-playing-bar" class="now-playing-bar" style="display: none;">
+        <a id="now-playing-link" href="#" class="now-playing-inner">
+            <img id="now-playing-cover" class="now-playing-cover" src="" alt="">
+            <div class="now-playing-info">
+                <div id="now-playing-title" class="now-playing-title"></div>
+                <div id="now-playing-author" class="now-playing-author"></div>
+            </div>
+            <div class="now-playing-status">
+                <svg id="now-playing-icon-playing" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:none;">
+                    <rect x="3" y="3" width="4" height="18" rx="1"/><rect x="11" y="3" width="4" height="18" rx="1"/><rect x="19" y="6" width="2" height="12" rx="1"/>
+                </svg>
+                <svg id="now-playing-icon-paused" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:none;">
+                    <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
+                </svg>
+            </div>
+        </a>
+    </div>
+    <script>
+    (function() {
+        var npPollTimer = null;
+
+        function isPlayerPage() {
+            return window.location.pathname.startsWith('/player/');
+        }
+
+        function isLoginPage() {
+            return window.location.pathname === '/login';
+        }
+
+        function updateNowPlayingBar(data) {
+            var bar = document.getElementById('now-playing-bar');
+            var mainContent = document.getElementById('main-content');
+            if (!bar) return;
+
+            if (!data || !data.active) {
+                bar.style.display = 'none';
+                if (mainContent) mainContent.style.paddingBottom = '';
+                return;
+            }
+
+            // Don't show on player page (player already visible)
+            if (isPlayerPage()) {
+                bar.style.display = 'none';
+                if (mainContent) mainContent.style.paddingBottom = '';
+                return;
+            }
+
+            document.getElementById('now-playing-cover').src = data.cover_url || '';
+            document.getElementById('now-playing-title').textContent = data.title || 'Unbekannt';
+            document.getElementById('now-playing-author').textContent = data.author || '';
+            document.getElementById('now-playing-link').href = '/player/' + data.item_id;
+
+            var iconPlaying = document.getElementById('now-playing-icon-playing');
+            var iconPaused = document.getElementById('now-playing-icon-paused');
+            if (data.is_playing) {
+                iconPlaying.style.display = '';
+                iconPaused.style.display = 'none';
+            } else {
+                iconPlaying.style.display = 'none';
+                iconPaused.style.display = '';
+            }
+
+            bar.style.display = '';
+            if (mainContent) mainContent.style.paddingBottom = '72px';
+        }
+
+        function pollNowPlaying() {
+            if (isPlayerPage() || isLoginPage()) return;
+
+            fetch('/status')
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(updateNowPlayingBar)
+                .catch(function() {});
+        }
+
+        function startNowPlayingPolling() {
+            if (npPollTimer) return;
+            pollNowPlaying();
+            npPollTimer = setInterval(pollNowPlaying, 5000);
+        }
+
+        function stopNowPlayingPolling() {
+            if (npPollTimer) {
+                clearInterval(npPollTimer);
+                npPollTimer = null;
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            if (!isLoginPage()) startNowPlayingPolling();
+        });
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopNowPlayingPolling();
+                navigator.sendBeacon('/sync-progress');
+            } else {
+                if (!isLoginPage()) startNowPlayingPolling();
+            }
+        });
+        window.addEventListener('pagehide', function() {
+            navigator.sendBeacon('/sync-progress');
+        });
+    })();
+    </script>
+    {{end}}
 
     {{if .ShowFooter}}
     <footer class="footer">

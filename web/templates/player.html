@@ -273,14 +273,18 @@ document.addEventListener('DOMContentLoaded', function() {
     updateStatus();
 });
 
-// Stop polling when page is hidden
+// Stop polling when page is hidden, sync progress
 document.addEventListener('visibilitychange', function() {
     if (document.hidden) {
         stopStatusPolling();
+        navigator.sendBeacon('/sync-progress');
     } else {
         startStatusPolling();
         updateStatus();
     }
+});
+window.addEventListener('pagehide', function() {
+    navigator.sendBeacon('/sync-progress');
 });
 </script>
 

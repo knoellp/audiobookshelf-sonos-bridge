@@ -83,4 +83,11 @@
         {{template "item-grid" .}}
     </div>
 </div>
+<script>
+// Save sort preference on htmx partial swaps (server sets cookie on full requests)
+document.body.addEventListener('htmx:afterRequest', function(e) {
+    var s = document.querySelector('select[name="sort"]');
+    if (s) document.cookie = 'preferredSort=' + encodeURIComponent(s.value) + ';path=/;max-age=31536000;SameSite=Lax';
+});
+</script>
 {{end}}

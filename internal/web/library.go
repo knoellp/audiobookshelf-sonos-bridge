@@ -121,8 +121,20 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 	filter := r.URL.Query().Get("filter")
 	sort := r.URL.Query().Get("sort")
 	if sort == "" {
-		sort = "title-asc"
+		if c, err := r.Cookie("preferredSort"); err == nil && c.Value != "" {
+			sort = c.Value
+		} else {
+			sort = "title-asc"
+		}
 	}
+	// Persist sort preference as cookie (1 year)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "preferredSort",
+		Value:    sort,
+		Path:     "/",
+		MaxAge:   365 * 24 * 60 * 60,
+		SameSite: http.SameSiteLaxMode,
+	})
 	view := r.URL.Query().Get("view")
 	if view == "" {
 		view = "grid"

@@ -1,0 +1,103 @@
+{{define "library-nav"}}
+<nav class="library-nav">
+    <!-- Burger menu toggle (mobile) -->
+    <button class="nav-burger" id="nav-burger" aria-label="Menu">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+    </button>
+
+    <!-- Navigation tabs -->
+    <div class="nav-tabs" id="nav-tabs">
+        <a href="/library/recent" class="nav-tab {{if eq .ActiveTab "recent"}}active{{end}}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            <span>Zuletzt</span>
+        </a>
+        <a href="/library/series{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "series"}}active{{end}}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+            </svg>
+            <span>Serien</span>
+        </a>
+        <a href="/library/authors{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "authors"}}active{{end}}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            <span>Autoren</span>
+        </a>
+        <a href="/library/genres{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "genres"}}active{{end}}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span>Genres</span>
+        </a>
+        <a href="/libraries/{{.SelectedLibraryID}}/items" class="nav-tab {{if eq .ActiveTab "all"}}active{{end}}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            <span>Alle</span>
+        </a>
+    </div>
+
+    <!-- Library dropdown -->
+    {{if .Libraries}}
+    <div class="nav-library-dropdown">
+        <select id="library-selector" onchange="switchLibrary(this.value)">
+            {{range .Libraries}}
+            <option value="{{.ID}}" {{if eq $.SelectedLibraryID .ID}}selected{{end}}>{{.Name}}</option>
+            {{end}}
+        </select>
+    </div>
+    {{end}}
+</nav>
+
+<script>
+// Burger menu toggle
+document.addEventListener('DOMContentLoaded', function() {
+    const burger = document.getElementById('nav-burger');
+    const tabs = document.getElementById('nav-tabs');
+
+    if (burger && tabs) {
+        burger.addEventListener('click', function() {
+            tabs.classList.toggle('open');
+            burger.classList.toggle('open');
+        });
+    }
+
+    // Restore selected library from localStorage if not already set
+    const selector = document.getElementById('library-selector');
+    if (selector && !selector.value) {
+        const savedLibrary = localStorage.getItem('selectedLibraryID');
+        if (savedLibrary) {
+            selector.value = savedLibrary;
+        }
+    }
+});
+
+// Switch library
+function switchLibrary(libraryId) {
+    localStorage.setItem('selectedLibraryID', libraryId);
+
+    // Get current path
+    const path = window.location.pathname;
+
+    // Update URL with new library parameter
+    if (path.startsWith('/library/series') || path.startsWith('/library/authors') || path.startsWith('/library/genres')) {
+        window.location.href = path + '?library=' + libraryId;
+    } else if (path.startsWith('/libraries/')) {
+        // Direct library items view - redirect to new library
+        window.location.href = '/libraries/' + libraryId + '/items';
+    }
+}
+</script>
+{{end}}
