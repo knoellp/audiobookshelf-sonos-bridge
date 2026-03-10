@@ -1189,6 +1189,18 @@ func (h *PlayerHandler) HandlePlayer(w http.ResponseWriter, r *http.Request) {
 	// Get playback session
 	playback, _ := h.playbackStore.GetBySessionID(session.ID)
 
+	// If no playback session for THIS item, use ABS progress as initial position
+	if playback == nil || playback.ItemID != itemID {
+		progress, err := absClient.GetProgress(ctx, itemID)
+		if err == nil && progress != nil && progress.CurrentTime > 0 {
+			playback = &store.PlaybackSession{
+				ItemID:      itemID,
+				PositionSec: int(progress.CurrentTime),
+				DurationSec: int(progress.Duration),
+			}
+		}
+	}
+
 	// Build template data with layout requirements
 	data := map[string]interface{}{
 		"Title":      item.Media.Metadata.Title,
