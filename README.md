@@ -8,8 +8,15 @@ Play audiobooks from [Audiobookshelf](https://www.audiobookshelf.org/) on your S
 - Play audiobooks on any Sonos speaker on your network
 - Automatic progress synchronization with Audiobookshelf
 - Resume playback from where you left off
-- Search and filter your library
-- Background cache warming for faster playback
+- Search and filter your library by title, author, series or genre
+- Library navigation by Authors, Genres and Series
+- Now-playing bar with quick access to the active book
+- Chapter display with visual progress markers
+- Volume control including Sonos group volume
+- Sonos group support — control all speakers in a group together
+- Transfer playback between speakers without losing your position
+- Sleep timer to stop playback after a set time
+- Background cache warming for faster playback start
 - Secure streaming with short-lived tokens
 
 ## Requirements
@@ -113,6 +120,7 @@ BRIDGE_PUBLIC_URL=http://localhost:8080 \
 | `BRIDGE_LOG_LEVEL` | Logging level: debug, info, warn, error | `info` |
 | `BRIDGE_TRANSCODE_WORKERS` | Number of concurrent transcoding workers | `2` |
 | `BRIDGE_ABS_MEDIA_PREFIX` | Path prefix ABS uses for media files | `/audiobooks` |
+| `BRIDGE_PATH_MAPPINGS` | Additional path mappings (`abs_prefix:local_prefix,...`) | – |
 
 **Docker Compose volume paths** (in `.env` file):
 
@@ -158,7 +166,7 @@ This service uses UPnP (SSDP) to discover Sonos devices on your local network. F
 
 - Verify the `PUBLIC_URL` is accessible from your Sonos speakers
 - Check that ffmpeg is installed and working
-- Review logs with `LOG_LEVEL=debug`
+- Review logs with `BRIDGE_LOG_LEVEL=debug`
 
 ### Progress not syncing
 
