@@ -276,7 +276,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const container = document.getElementById('player-container');
             const currentItemId = container ? container.dataset.itemId : null;
 
-            if (playbackActive && playbackItemId === currentItemId && newUuid) {
+            if (playbackActive && playbackIsPlaying && playbackItemId === currentItemId && newUuid) {
                 // Transfer playback to new player by calling resume with new UUID
                 // This will stop the old player and start on the new one at the same position
                 const success = await transportAction('resume', { sonos_uuid: newUuid });

@@ -82,7 +82,7 @@ function selectSonosDevice(uuid, name) {
 }
 
 // Restore selection on load
-document.addEventListener('DOMContentLoaded', function() {
+(function() {
     const savedUUID = localStorage.getItem('selectedSonosUUID');
     if (savedUUID) {
         const card = document.querySelector(`.device-card[data-uuid="${savedUUID}"]`);
@@ -90,6 +90,6 @@ document.addEventListener('DOMContentLoaded', function() {
             card.classList.add('selected');
         }
     }
-});
+})();
 </script>
 {{end}}

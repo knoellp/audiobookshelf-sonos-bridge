@@ -73,20 +73,12 @@ func main() {
 		slog.Info("reset stale cache entries", "count", count)
 	}
 
-	// Stop all playback sessions that were left playing from previous run
-	playbackCount, err := playbackStore.StopAllPlaying()
+	// Delete all playback sessions from previous run (progress is synced to ABS)
+	playbackCount, err := playbackStore.DeleteAll()
 	if err != nil {
-		slog.Warn("failed to stop stale playback sessions", "error", err)
+		slog.Warn("failed to delete playback sessions", "error", err)
 	} else if playbackCount > 0 {
-		slog.Info("stopped stale playback sessions", "count", playbackCount)
-	}
-
-	// Delete stale playback sessions (older than 24 hours)
-	staleCount, err := playbackStore.DeleteStale(24 * time.Hour)
-	if err != nil {
-		slog.Warn("failed to delete stale playback sessions", "error", err)
-	} else if staleCount > 0 {
-		slog.Info("deleted stale playback sessions", "count", staleCount)
+		slog.Info("deleted playback sessions from previous run", "count", playbackCount)
 	}
 
 	// Clean up old sessions (not used in 7 days)

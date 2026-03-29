@@ -664,10 +664,10 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 	targetIP := h.getCoordinatorIP(ctx, device.IPAddress)
 	avt := sonos.NewAVTransport(targetIP)
 
-	// Fetch latest progress from ABS (single source of truth)
+	// Fetch latest progress from ABS (single source of truth for position)
 	var absPositionSec int
-	absClient, err := h.authHandler.GetABSClientForSession(session)
-	if err == nil {
+	absClient, absErr := h.authHandler.GetABSClientForSession(session)
+	if absErr == nil {
 		progress, err := absClient.GetProgress(ctx, playback.ItemID)
 		if err == nil && progress != nil {
 			absPositionSec = int(progress.CurrentTime)
@@ -679,59 +679,115 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check if ABS has a different position (user listened elsewhere)
-	needsSeek := false
-	var targetPosition int
+	// Determine target position (prefer ABS if significantly different)
+	targetPosition := playback.PositionSec
 	if absPositionSec > 0 {
 		diff := absPositionSec - playback.PositionSec
 		if diff < 0 {
 			diff = -diff
 		}
-		// If difference is more than 5 seconds, use ABS position
 		if diff > 5 {
-			needsSeek = true
 			targetPosition = absPositionSec
-			slog.Info("position changed in ABS, will seek after resume",
+			slog.Info("position changed in ABS, seeking on resume",
 				"item_id", playback.ItemID,
 				"local_position", playback.PositionSec,
 				"abs_position", absPositionSec,
 				"diff_sec", diff,
 			)
-			// Update local position
 			h.playbackStore.UpdatePosition(playback.ID, absPositionSec)
 		}
 	}
 
+	// Always regenerate stream token and re-set URI on Sonos.
+	// This handles: expired tokens (TTL=1h), Sonos stopped/lost-queue state.
+	cacheEntry, err := h.cacheIndex.GetEntry(playback.ItemID)
+	if err != nil || cacheEntry == nil {
+		slog.Error("cache entry not found for resume", "item_id", playback.ItemID, "error", err)
+		http.Error(w, "cache entry not found", http.StatusNotFound)
+		return
+	}
+
+	newToken, err := h.tokenGen.Generate(playback.ItemID, session.UserID, session.ID)
+	if err != nil {
+		slog.Error("failed to generate stream token on resume", "error", err)
+		http.Error(w, "token generation failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Build stream URL (segmented or single file)
+	var streamURL string
+	var localSeekPos int
+	if cacheEntry.IsSegmented() {
+		segmentDuration := cacheEntry.SegmentDurationSec
+		if segmentDuration <= 0 {
+			segmentDuration = 7200
+		}
+		currentSegment := playback.CurrentSegment
+		localSeekPos = targetPosition - (currentSegment * segmentDuration)
+		if localSeekPos < 0 {
+			localSeekPos = 0
+		}
+		ext := ".m4a"
+		switch cacheEntry.CacheFormat {
+		case "mp3":
+			ext = ".mp3"
+		case "flac":
+			ext = ".flac"
+		}
+		streamURL = fmt.Sprintf("%s/stream/%s/segment_%03d%s", h.publicURL, newToken, currentSegment, ext)
+		slog.Debug("resume using segmented stream",
+			"segment", currentSegment,
+			"global_position", targetPosition,
+			"local_seek_pos", localSeekPos,
+		)
+	} else {
+		cacheFileName := cache.GetCacheFileName(cacheEntry.CacheFormat)
+		streamURL = fmt.Sprintf("%s/stream/%s/%s", h.publicURL, newToken, cacheFileName)
+		localSeekPos = targetPosition
+	}
+
+	// Get item metadata for DIDL
+	metaClient, err := h.authHandler.GetABSClientForSession(session)
+	if err != nil {
+		http.Error(w, "session error", http.StatusInternalServerError)
+		return
+	}
+	item, err := metaClient.GetItem(ctx, playback.ItemID)
+	if err != nil {
+		slog.Error("failed to get item on resume", "item_id", playback.ItemID, "error", err)
+		http.Error(w, "failed to get item", http.StatusInternalServerError)
+		return
+	}
+	mimeType := cache.GetContentType(cacheEntry.CacheFormat)
+	metadata := buildDIDLMetadata(item, streamURL, mimeType)
+
+	// Re-set transport URI with fresh token, then play
+	if err := avt.SetAVTransportURI(ctx, streamURL, metadata); err != nil {
+		slog.Error("failed to set transport URI on resume", "error", err)
+		http.Error(w, "failed to set URI", http.StatusInternalServerError)
+		return
+	}
+
 	if err := avt.Play(ctx); err != nil {
-		// Error 701 = "Transition not available" - device may already be playing
-		if strings.Contains(err.Error(), "errorCode>701") {
-			slog.Debug("resume not needed - transition not available")
+		slog.Error("failed to resume playback", "error", err)
+		http.Error(w, "failed to resume", http.StatusInternalServerError)
+		return
+	}
+
+	// Seek to position (SetAVTransportURI resets Sonos to position 0)
+	if localSeekPos > 0 {
+		time.Sleep(300 * time.Millisecond)
+		if err := avt.Seek(ctx, time.Duration(localSeekPos)*time.Second); err != nil {
+			slog.Warn("failed to seek on resume", "error", err)
 		} else {
-			slog.Error("failed to resume", "error", err)
-			http.Error(w, "failed to resume", http.StatusInternalServerError)
-			return
+			slog.Debug("seeked to position on resume", "position_sec", localSeekPos)
 		}
 	}
 
-	// Seek to ABS position if it changed
-	if needsSeek {
-		// For segmented playback, calculate local position within segment
-		var seekPosition int
-		if playback.SegmentDurationSec > 0 {
-			_, seekPosition = store.GlobalToSegment(targetPosition, playback.SegmentDurationSec)
-		} else {
-			seekPosition = targetPosition
-		}
-
-		time.Sleep(300 * time.Millisecond) // Brief delay for playback to start
-		if err := avt.Seek(ctx, time.Duration(seekPosition)*time.Second); err != nil {
-			slog.Warn("failed to seek to ABS position on resume", "error", err)
-		} else {
-			slog.Debug("seeked to ABS position on resume", "position_sec", seekPosition)
-		}
+	// Update stream token and playing state
+	if err := h.playbackStore.UpdateStreamToken(playback.ID, newToken); err != nil {
+		slog.Warn("failed to update stream token on resume", "error", err)
 	}
-
-	// Update status
 	h.playbackStore.UpdatePlaying(playback.ID, true)
 
 	w.WriteHeader(http.StatusOK)

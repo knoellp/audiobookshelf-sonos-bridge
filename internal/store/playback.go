@@ -216,6 +216,17 @@ func (s *PlaybackStore) StopAllPlaying() (int64, error) {
 	return result.RowsAffected()
 }
 
+// DeleteAll removes all playback sessions.
+// Used on startup because sessions from previous runs are stale
+// (progress is synced to Audiobookshelf).
+func (s *PlaybackStore) DeleteAll() (int64, error) {
+	result, err := s.db.Exec(`DELETE FROM playback_sessions`)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 // SetSleepTimer sets the sleep timer for a playback session.
 func (s *PlaybackStore) SetSleepTimer(id string, sleepAt time.Time) error {
 	query := `UPDATE playback_sessions SET sleep_at = ? WHERE id = ?`

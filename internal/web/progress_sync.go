@@ -149,9 +149,24 @@ func (s *ProgressSyncer) pollSession(ctx context.Context, playback *store.Playba
 		return
 	}
 
+	// Skip if Sonos is in TRANSITIONING state (both position and duration are zero)
+	if positionSec == 0 && trackDuration == 0 {
+		return
+	}
+	// Don't overwrite a valid stored position with zero (device stopped/resetting)
+	if positionSec == 0 && playback.PositionSec > 10 {
+		return
+	}
+
+	// For segmented playback, convert local segment position to global position
+	globalPosSec := positionSec
+	if playback.SegmentDurationSec > 0 {
+		globalPosSec = store.SegmentToGlobal(playback.CurrentSegment, positionSec, playback.SegmentDurationSec)
+	}
+
 	// Update stored position
-	if positionSec != playback.PositionSec {
-		s.playbackStore.UpdatePosition(playback.ID, positionSec)
+	if globalPosSec != playback.PositionSec {
+		s.playbackStore.UpdatePosition(playback.ID, globalPosSec)
 	}
 }
 
