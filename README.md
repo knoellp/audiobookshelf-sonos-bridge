@@ -2,6 +2,22 @@
 
 Play audiobooks from [Audiobookshelf](https://www.audiobookshelf.org/) on your Sonos speakers with automatic progress synchronization.
 
+## Screenshots
+
+<div align="center">
+
+| Library | Player | Series |
+|:---:|:---:|:---:|
+| ![Library](docs/screenshots/library.png) | ![Player](docs/screenshots/player.png) | ![Series](docs/screenshots/series.png) |
+| Browse 289 audiobooks | Playback with chapters & volume | Navigate by series |
+
+| Authors |
+|:---:|
+| ![Authors](docs/screenshots/authors.png) |
+| Browse by author |
+
+</div>
+
 ## Features
 
 - Browse your Audiobookshelf library from a mobile-friendly web interface
