@@ -514,6 +514,16 @@ async function checkGroupInfo() {
             groupSize = data.group_size || 1;
             updateGroupVolumeUI();
 
+            // Set volume immediately from group-info response (avoids showing 50% on page load)
+            if (data.volume !== undefined && data.volume > 0 && !volumeAdjusting) {
+                const slider = document.getElementById('volume-slider');
+                const valueDisplay = document.getElementById('volume-value');
+                if (slider) {
+                    slider.value = data.volume;
+                    valueDisplay.textContent = data.volume + '%';
+                }
+            }
+
             if (isGroupMode) {
                 // Fetch initial group volume
                 fetchGroupVolume();

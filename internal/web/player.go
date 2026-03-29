@@ -1917,6 +1917,7 @@ func (h *PlayerHandler) HandleGetGroupInfo(w http.ResponseWriter, r *http.Reques
 				// Found our group
 				var visibleMembers []map[string]interface{}
 				var coordinatorName string
+				var coordinatorIP string
 
 				for _, m := range group.Members {
 					if !m.Invisible {
@@ -1929,28 +1930,45 @@ func (h *PlayerHandler) HandleGetGroupInfo(w http.ResponseWriter, r *http.Reques
 						visibleMembers = append(visibleMembers, memberInfo)
 						if m.UUID == group.Coordinator {
 							coordinatorName = m.ZoneName
+							coordinatorIP = m.IPAddress
 						}
 					}
 				}
 
+				isGroup := len(visibleMembers) > 1
+
+				// Fetch current volume so the UI can show it immediately on page load
+				var currentVolume int
+				if isGroup && coordinatorIP != "" {
+					grc := sonos.NewGroupRenderingControl(coordinatorIP)
+					currentVolume, _ = grc.GetGroupVolume(ctx)
+				} else {
+					avt := sonos.NewAVTransport(device.IPAddress)
+					currentVolume, _ = avt.GetVolume(ctx)
+				}
+
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]interface{}{
-					"is_group":         len(visibleMembers) > 1,
+					"is_group":         isGroup,
 					"group_size":       len(visibleMembers),
 					"coordinator_uuid": group.Coordinator,
 					"coordinator_name": coordinatorName,
 					"members":          visibleMembers,
+					"volume":           currentVolume,
 				})
 				return
 			}
 		}
 	}
 
-	// Device not found in any group (standalone)
+	// Device not found in any group (standalone) - fetch volume directly
+	avt := sonos.NewAVTransport(device.IPAddress)
+	currentVolume, _ := avt.GetVolume(ctx)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"is_group":   false,
 		"group_size": 1,
+		"volume":     currentVolume,
 	})
 }
 
