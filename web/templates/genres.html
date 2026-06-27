@@ -4,7 +4,6 @@
         <h1>Genres</h1>
         <p class="subtitle">{{len .Genres}} Genres in {{.LibraryName}}</p>
     </div>
-
     {{if .Genres}}
     <div class="list-grid">
         {{range .Genres}}
@@ -25,19 +24,17 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
         </svg>
-        <h3>Keine Genres gefunden</h3>
-        <p>In dieser Bibliothek gibt es keine Genres.</p>
+        <h3>No genres found</h3>
+        <p>This library has no genres.</p>
     </div>
     {{end}}
 </div>
-
 <style>
 .list-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
     gap: 0.75rem;
 }
-
 .list-card {
     display: flex;
     align-items: center;
@@ -47,11 +44,9 @@
     border-radius: var(--radius);
     transition: background var(--transition);
 }
-
 .list-card:hover {
     background: var(--bg-elevated);
 }
-
 .list-icon {
     flex-shrink: 0;
     width: 48px;
@@ -63,12 +58,10 @@
     border-radius: 50%;
     color: var(--text-secondary);
 }
-
 .list-info {
     flex: 1;
     min-width: 0;
 }
-
 .list-title {
     font-size: 0.95rem;
     font-weight: 500;
@@ -76,7 +69,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-
 .empty-state {
     display: flex;
     flex-direction: column;
@@ -86,12 +78,10 @@
     text-align: center;
     color: var(--text-secondary);
 }
-
 .empty-state svg {
     margin-bottom: 1.5rem;
     opacity: 0.5;
 }
-
 .empty-state h3 {
     font-size: 1.25rem;
     margin-bottom: 0.5rem;
