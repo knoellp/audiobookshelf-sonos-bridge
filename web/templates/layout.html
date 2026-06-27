@@ -37,11 +37,11 @@
             <!-- Center: Navigation tabs (desktop) -->
             {{if .Username}}
             <nav class="header-nav" id="header-nav">
-                <a href="/library/recent" class="nav-tab {{if eq .ActiveTab "recent"}}active{{end}}">Zuletzt</a>
-                <a href="/library/series{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "series"}}active{{end}}">Serien</a>
-                <a href="/library/authors{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "authors"}}active{{end}}">Autoren</a>
+                <a href="/library/recent" class="nav-tab {{if eq .ActiveTab "recent"}}active{{end}}">Recent</a>
+                <a href="/library/series{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "series"}}active{{end}}">Series</a>
+                <a href="/library/authors{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "authors"}}active{{end}}">Authors</a>
                 <a href="/library/genres{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "genres"}}active{{end}}">Genres</a>
-                <a href="/libraries/{{.SelectedLibraryID}}/items" class="nav-tab {{if eq .ActiveTab "all"}}active{{end}}">Alle</a>
+                <a href="/libraries/{{.SelectedLibraryID}}/items" class="nav-tab {{if eq .ActiveTab "all"}}active{{end}}">All</a>
             </nav>
 
             <!-- Right: Library picker, Sonos, User -->
@@ -49,7 +49,7 @@
                 <!-- Library picker button -->
                 {{if .Libraries}}
                 <div class="library-picker">
-                    <button type="button" id="library-picker-toggle" class="btn btn-icon" title="Bibliothek wählen">
+                    <button type="button" id="library-picker-toggle" class="btn btn-icon" title="Select library">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
                             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
@@ -67,7 +67,7 @@
                 {{end}}
 
                 <!-- Sonos device picker -->
-                <button type="button" id="sonos-picker-toggle" class="btn btn-icon" title="Sonos Gerät wählen">
+                <button type="button" id="sonos-picker-toggle" class="btn btn-icon" title="Select Sonos device">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
                         <circle cx="12" cy="14" r="4"></circle>
@@ -96,11 +96,11 @@
 
         <!-- Mobile nav dropdown -->
         <div class="header-nav-mobile" id="header-nav-mobile">
-            <a href="/library/recent" class="nav-tab {{if eq .ActiveTab "recent"}}active{{end}}">Zuletzt</a>
-            <a href="/library/series{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "series"}}active{{end}}">Serien</a>
-            <a href="/library/authors{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "authors"}}active{{end}}">Autoren</a>
+            <a href="/library/recent" class="nav-tab {{if eq .ActiveTab "recent"}}active{{end}}">Recent</a>
+            <a href="/library/series{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "series"}}active{{end}}">Series</a>
+            <a href="/library/authors{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "authors"}}active{{end}}">Authors</a>
             <a href="/library/genres{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "genres"}}active{{end}}">Genres</a>
-            <a href="/libraries/{{.SelectedLibraryID}}/items" class="nav-tab {{if eq .ActiveTab "all"}}active{{end}}">Alle</a>
+            <a href="/libraries/{{.SelectedLibraryID}}/items" class="nav-tab {{if eq .ActiveTab "all"}}active{{end}}">All</a>
         </div>
     </header>
     <!-- Sonos Device Picker Modal -->
@@ -341,7 +341,7 @@
             }
 
             document.getElementById('now-playing-cover').src = data.cover_url || '';
-            document.getElementById('now-playing-title').textContent = data.title || 'Unbekannt';
+            document.getElementById('now-playing-title').textContent = data.title || 'Unknown';
             document.getElementById('now-playing-author').textContent = data.author || '';
             document.getElementById('now-playing-link').href = '/player/' + data.item_id;
 
