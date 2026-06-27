@@ -160,20 +160,20 @@ async function transportAction(action, data = {}) {
             // Show user-friendly error messages
             if (action === 'resume') {
                 if (response.status === 404) {
-                    alert('Fehler: Gerät nicht gefunden oder keine aktive Wiedergabe. Bitte starte die Wiedergabe neu.');
+                    alert('Error: Device not found or no active playback. Please restart playback.');
                 } else {
-                    alert('Fehler beim Fortsetzen der Wiedergabe: ' + errorText);
+                    alert('Error resuming playback: ' + errorText);
                 }
             } else if (action === 'stop') {
-                alert('Fehler beim Stoppen: ' + errorText);
+                alert('Error stopping: ' + errorText);
             } else {
-                alert('Aktion fehlgeschlagen: ' + errorText);
+                alert('Action failed: ' + errorText);
             }
             return false;
         }
     } catch (err) {
         console.error('Transport action failed:', err);
-        alert('Netzwerkfehler: ' + err.message);
+        alert('Network error: ' + err.message);
         return false;
     }
 }
@@ -218,7 +218,7 @@ async function startPlayback() {
     }
 
     if (!sonosUuid) {
-        alert('Bitte wähle zuerst einen Sonos-Lautsprecher aus.');
+        alert('Please select a Sonos speaker first.');
         return;
     }
 
@@ -242,11 +242,11 @@ async function startPlayback() {
         } else {
             const text = await response.text();
             console.error('Play failed:', text);
-            alert('Wiedergabe fehlgeschlagen: ' + text);
+            alert('Playback failed: ' + text);
         }
     } catch (err) {
         console.error('Play failed:', err);
-        alert('Wiedergabe fehlgeschlagen');
+        alert('Playback failed');
     }
 }
 
