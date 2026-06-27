@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="library-container">
-    <h1>Bibliotheken</h1>
-    <p class="subtitle">Wähle eine Bibliothek zum Durchsuchen</p>
+    <h1>Libraries</h1>
+    <p class="subtitle">Select a library to browse</p>
 
     <div class="library-list">
         {{range .Libraries}}
@@ -19,7 +19,7 @@
         </a>
         {{else}}
         <div class="empty-state">
-            <p>Keine Bibliotheken gefunden. Bitte prüfe die Audiobookshelf-Verbindung.</p>
+            <p>No libraries found. Please check the Audiobookshelf connection.</p>
         </div>
         {{end}}
     </div>
