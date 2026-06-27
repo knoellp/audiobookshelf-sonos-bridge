@@ -16,21 +16,21 @@
                 <circle cx="12" cy="12" r="10"></circle>
                 <polyline points="12 6 12 12 16 14"></polyline>
             </svg>
-            <span>Zuletzt</span>
+            <span>Recent</span>
         </a>
         <a href="/library/series{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "series"}}active{{end}}">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
                 <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
             </svg>
-            <span>Serien</span>
+            <span>Series</span>
         </a>
         <a href="/library/authors{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "authors"}}active{{end}}">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                 <circle cx="12" cy="7" r="4"></circle>
             </svg>
-            <span>Autoren</span>
+            <span>Authors</span>
         </a>
         <a href="/library/genres{{if .SelectedLibraryID}}?library={{.SelectedLibraryID}}{{end}}" class="nav-tab {{if eq .ActiveTab "genres"}}active{{end}}">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -45,7 +45,7 @@
                 <rect x="14" y="14" width="7" height="7"></rect>
                 <rect x="3" y="14" width="7" height="7"></rect>
             </svg>
-            <span>Alle</span>
+            <span>All</span>
         </a>
     </div>
 

@@ -5,10 +5,10 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
-            Zurück zu Serien
+            Back to series
         </a>
         <h1>{{.SeriesName}}</h1>
-        <p class="subtitle">{{.BookCount}} {{if eq .BookCount 1}}Buch{{else}}Bücher{{end}} in dieser Serie</p>
+        <p class="subtitle">{{.BookCount}} {{if eq .BookCount 1}}book{{else}}books{{end}} in this series</p>
     </div>
 
     {{if .Books}}
@@ -37,8 +37,8 @@
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
         </svg>
-        <h3>Keine Bücher gefunden</h3>
-        <p>In dieser Serie gibt es keine Bücher.</p>
+        <h3>No books found</h3>
+        <p>There are no books in this series.</p>
     </div>
     {{end}}
 </div>

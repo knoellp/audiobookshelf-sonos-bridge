@@ -1,8 +1,8 @@
 {{define "content"}}
 <div class="items-container">
     <div class="items-header">
-        <h1>Serien</h1>
-        <p class="subtitle">{{len .Series}} Serien in {{.LibraryName}}</p>
+        <h1>Series</h1>
+        <p class="subtitle">{{len .Series}} series in {{.LibraryName}}</p>
     </div>
 
     {{if .Series}}
@@ -27,7 +27,7 @@
             </div>
             <div class="series-info">
                 <h3 class="series-title">{{.Name}}</h3>
-                <span class="series-count">{{.BookCount}} {{if eq .BookCount 1}}Buch{{else}}Bücher{{end}}</span>
+                <span class="series-count">{{.BookCount}} {{if eq .BookCount 1}}books{{else}}books{{end}}</span>
             </div>
         </a>
         {{end}}
@@ -38,8 +38,8 @@
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
         </svg>
-        <h3>Keine Serien gefunden</h3>
-        <p>In dieser Bibliothek gibt es keine Serien.</p>
+        <h3>No series found</h3>
+        <p>There are no series in this library.</p>
     </div>
     {{end}}
 </div>
