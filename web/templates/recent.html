@@ -1,8 +1,8 @@
 {{define "content"}}
 <div class="items-container">
     <div class="items-header">
-        <h1>Zuletzt gehört</h1>
-        <p class="subtitle">Deine kürzlich gespielten Hörbücher aus allen Bibliotheken</p>
+        <h1>Recently played</h1>
+        <p class="subtitle">Your recently played audiobooks from all libraries</p>
     </div>
 
     {{if .Items}}
@@ -40,9 +40,9 @@
             <circle cx="12" cy="12" r="10"></circle>
             <polyline points="12 6 12 12 16 14"></polyline>
         </svg>
-        <h3>Keine kürzlich gespielten Hörbücher</h3>
-        <p>Starte ein Hörbuch, um es hier zu sehen.</p>
-        <a href="/library" class="btn btn-primary">Bibliothek durchsuchen</a>
+        <h3>No recently played audiobooks</h3>
+        <p>Start an audiobook to see it here.</p>
+        <a href="/library" class="btn btn-primary">Browse library</a>
     </div>
     {{end}}
 </div>
