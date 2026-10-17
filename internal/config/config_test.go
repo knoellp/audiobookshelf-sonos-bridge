@@ -294,3 +294,33 @@ func TestLoad_SessionSecretFromEnvOverridesFile(t *testing.T) {
 		t.Error("env secret should override auto-generated secret")
 	}
 }
+
+func TestMapABSPathToLocal_PrefixBoundary(t *testing.T) {
+	cfg := &Config{
+		MediaDir:       "/media",
+		ABSMediaPrefix: "/audiobooks",
+		PathMappings: []PathMapping{
+			{ABSPrefix: "/audiobooks-kids", LocalPath: "/media-kids"},
+		},
+	}
+
+	tests := []struct {
+		in, want string
+	}{
+		{"/audiobooks/a/b.m4b", "/media/a/b.m4b"},
+		{"/audiobooks", "/media"},
+		{"/audiobooks-kids/x/y.mp3", "/media-kids/x/y.mp3"},
+		{"/audiobooksfoo/x", "/audiobooksfoo/x"}, // must NOT map via /audiobooks
+	}
+	for _, tt := range tests {
+		if got := cfg.MapABSPathToLocal(tt.in); got != tt.want {
+			t.Errorf("MapABSPathToLocal(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+
+	// Without an explicit mapping, /audiobooks-kids must not be mapped via /audiobooks.
+	cfg.PathMappings = nil
+	if got := cfg.MapABSPathToLocal("/audiobooks-kids/x"); got != "/audiobooks-kids/x" {
+		t.Errorf("got %q, want unmapped path", got)
+	}
+}

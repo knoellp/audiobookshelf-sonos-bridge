@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -81,12 +84,14 @@ func main() {
 		slog.Info("deleted playback sessions from previous run", "count", playbackCount)
 	}
 
-	// Clean up old sessions (not used in 7 days)
-	sessionCount, err := sessionStore.DeleteOlderThan(time.Now().Add(-7 * 24 * time.Hour))
-	if err != nil {
-		slog.Warn("failed to cleanup old sessions", "error", err)
-	} else if sessionCount > 0 {
-		slog.Info("cleaned up old sessions", "count", sessionCount)
+	// Sessions never expire by default; optionally drop long-idle ones.
+	if cfg.SessionMaxIdle > 0 {
+		sessionCount, err := sessionStore.DeleteOlderThan(time.Now().Add(-cfg.SessionMaxIdle))
+		if err != nil {
+			slog.Warn("failed to cleanup old sessions", "error", err)
+		} else if sessionCount > 0 {
+			slog.Info("cleaned up old sessions", "count", sessionCount)
+		}
 	}
 
 	// Initialize Audiobookshelf client
@@ -102,9 +107,21 @@ func main() {
 		slog.Warn("failed to cleanup temp files", "error", err)
 	}
 
-	// Initialize stream token generator (1 hour TTL)
-	tokenGen := stream.NewTokenGenerator(cfg.SessionSecret, time.Hour)
+	// Initialize stream token generator (TTL from config, default 24h)
+	tokenGen := stream.NewTokenGenerator(cfg.SessionSecret, cfg.StreamTokenTTL)
 	streamHandler := stream.NewHandler(tokenGen, cacheIndex, cfg.PublicURL)
+	if len(cfg.AllowedNetworks) > 0 {
+		var allowed []net.IPNet
+		for _, cidr := range cfg.AllowedNetworks {
+			_, ipNet, err := net.ParseCIDR(cidr)
+			if err != nil {
+				slog.Error("invalid BRIDGE_ALLOWED_NETWORKS entry", "entry", cidr, "error", err)
+				os.Exit(1)
+			}
+			allowed = append(allowed, *ipNet)
+		}
+		streamHandler.SetAllowedNetworks(allowed)
+	}
 
 	// Initialize auth handler
 	authHandler, err := web.NewAuthHandler(absClient, sessionStore, cfg.SessionSecret)
@@ -112,6 +129,8 @@ func main() {
 		slog.Error("failed to initialize auth handler", "error", err)
 		os.Exit(1)
 	}
+
+	authHandler.SetSecureCookies(strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https"))
 
 	// Load templates
 	templates, err := loadTemplates()
@@ -124,7 +143,8 @@ func main() {
 	discovery := sonos.NewDiscovery(deviceStore)
 
 	// Initialize progress syncer
-	progressSyncer := web.NewProgressSyncer(absClient, playbackStore, sessionStore, deviceStore, authHandler)
+	segmentTransitioner := web.NewSegmentTransitioner(cacheIndex, tokenGen, cfg.PublicURL, playbackStore, sessionStore, deviceStore, authHandler)
+	progressSyncer := web.NewProgressSyncer(absClient, playbackStore, sessionStore, deviceStore, authHandler, cfg.PublicURL, segmentTransitioner)
 
 	// Initialize handlers
 	libraryHandler := web.NewLibraryHandler(authHandler, templates, cacheStore)
@@ -140,6 +160,7 @@ func main() {
 		playbackStore,
 		cfg.MapABSPathToLocal,
 		progressSyncer,
+		segmentTransitioner,
 	)
 
 	// Initialize sleep timer worker
@@ -251,6 +272,7 @@ if (savedLibrary) {
 	mux.Handle("GET /player/{id}", auth(playerHandler.HandlePlayer))
 	mux.Handle("GET /status", auth(playerHandler.HandleStatus))
 	mux.Handle("GET /cache/status/{id}", auth(playerHandler.HandleCacheStatus))
+	mux.Handle("POST /cache/prepare/{id}", auth(playerHandler.HandlePrepare))
 
 	// Transport control routes (protected)
 	mux.Handle("POST /transport/pause", auth(playerHandler.HandlePause))
@@ -357,6 +379,7 @@ if (savedLibrary) {
 func loadTemplates() (*template.Template, error) {
 	funcMap := template.FuncMap{
 		"formatDuration": formatDuration,
+		"formatHMS":      formatHMS,
 		"mult":           func(a, b float64) float64 { return a * b },
 		"progressPercent": func(position, duration int) float64 {
 			if duration == 0 {
@@ -372,6 +395,9 @@ func loadTemplates() (*template.Template, error) {
 				return template.JS("[]")
 			}
 			return template.JS(b)
+		},
+		"base64": func(s string) string {
+			return base64.URLEncoding.EncodeToString([]byte(s))
 		},
 	}
 
@@ -394,6 +420,7 @@ func loadTemplates() (*template.Template, error) {
 func getFuncMap() template.FuncMap {
 	return template.FuncMap{
 		"formatDuration": formatDuration,
+		"formatHMS":      formatHMS,
 		"mult":           func(a, b float64) float64 { return a * b },
 		"progressPercent": func(position, duration int) float64 {
 			if duration == 0 {
@@ -409,6 +436,9 @@ func getFuncMap() template.FuncMap {
 				return template.JS("[]")
 			}
 			return template.JS(b)
+		},
+		"base64": func(s string) string {
+			return base64.URLEncoding.EncodeToString([]byte(s))
 		},
 	}
 }
@@ -442,6 +472,17 @@ func renderTemplate(w http.ResponseWriter, _ *template.Template, name string, da
 		slog.Error("template execution error", "error", err)
 		http.Error(w, "Template error", http.StatusInternalServerError)
 	}
+}
+
+// formatHMS formats seconds as H:MM:SS (or M:SS below one hour).
+func formatHMS(totalSec int) string {
+	hours := totalSec / 3600
+	minutes := (totalSec % 3600) / 60
+	seconds := totalSec % 60
+	if hours > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+	}
+	return fmt.Sprintf("%d:%02d", minutes, seconds)
 }
 
 func formatDuration(seconds int) string {

@@ -129,6 +129,7 @@ BRIDGE_PUBLIC_URL=http://localhost:8080 \
 | `BRIDGE_ABS_URL` | Audiobookshelf server URL | **Required** |
 | `BRIDGE_PUBLIC_URL` | Public URL for this service (must be accessible from Sonos) | **Required** |
 | `BRIDGE_SESSION_SECRET` | Secret for session encryption (min 32 chars) | Auto-generated |
+| `BRIDGE_SESSION_MAX_IDLE` | Delete sessions unused for this long (Go duration, e.g. `2160h`); empty = never | – |
 | `BRIDGE_PORT` | HTTP server port | `8080` |
 | `BRIDGE_MEDIA_DIR` | Path to media files inside container | `/media` |
 | `BRIDGE_CACHE_DIR` | Directory for transcoded audio cache | `/cache` |
@@ -145,6 +146,8 @@ BRIDGE_PUBLIC_URL=http://localhost:8080 \
 | `MEDIA_PATH` | Host path to your audiobooks directory |
 | `CACHE_PATH` | Host path for transcoded audio cache |
 | `CONFIG_PATH` | Host path for configuration and database |
+
+Sessions never expire. To allow automatic re-login when Audiobookshelf rejects the token, the ABS password is stored encrypted (AES-256-GCM) with the key in `/config/session.key`; anyone with both the database and that key can decrypt it.
 
 ## Usage
 

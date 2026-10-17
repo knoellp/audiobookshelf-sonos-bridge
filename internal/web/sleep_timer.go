@@ -109,7 +109,7 @@ func (w *SleepTimerWorker) triggerSleepTimer(ctx context.Context, session *store
 	}
 
 	// Get current position from Sonos before pausing
-	avt := sonos.NewAVTransport(device.IPAddress)
+	avt := sonos.NewAVTransport(coordinatorIP(ctx, device.IPAddress))
 	posInfo, err := avt.GetPositionInfo(ctx)
 	if err != nil {
 		slog.Warn("failed to get position before sleep pause",
@@ -119,7 +119,7 @@ func (w *SleepTimerWorker) triggerSleepTimer(ctx context.Context, session *store
 	} else {
 		// Update position in database
 		relTime := sonos.ParseDuration(posInfo.RelTime)
-		positionSec := int(relTime.Seconds())
+		positionSec := globalPosition(session, int(relTime.Seconds()))
 		if err := w.playbackStore.UpdatePosition(session.ID, positionSec); err != nil {
 			slog.Warn("failed to update position before sleep pause",
 				"session_id", session.SessionID,
@@ -174,18 +174,14 @@ func (w *SleepTimerWorker) syncProgressToABS(ctx context.Context, session *store
 		return
 	}
 
-	// Decrypt the token
-	token, err := w.tokenDecrypt.DecryptToken(userSession.ABSTokenEnc)
+	client, err := clientForSession(w.tokenDecrypt, w.absClient, userSession)
 	if err != nil {
-		slog.Warn("failed to decrypt token for ABS sync",
+		slog.Warn("failed to create ABS client for ABS sync",
 			"session_id", session.SessionID,
 			"error", err,
 		)
 		return
 	}
-
-	// Create client with user's token
-	client := w.absClient.WithToken(token)
 
 	// Build progress update
 	progress := float64(0)

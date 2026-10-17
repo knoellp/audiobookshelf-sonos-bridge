@@ -1,13 +1,19 @@
 package web
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"audiobookshelf-sonos-bridge/internal/abs"
+	"audiobookshelf-sonos-bridge/internal/cache"
+	"audiobookshelf-sonos-bridge/internal/store"
 )
 
 func TestHandlePlay_MissingParams(t *testing.T) {
@@ -287,5 +293,169 @@ func TestBuildDIDLMetadata(t *testing.T) {
 	// Should contain author
 	if !strings.Contains(metadata, "Test Author") {
 		t.Error("expected metadata to contain author")
+	}
+}
+
+func TestHandlePrepare_MissingItemID(t *testing.T) {
+	req := httptest.NewRequest("POST", "/cache/prepare/", nil)
+	req = req.WithContext(context.WithValue(req.Context(), sessionContextKey, &store.Session{ID: "s", UserID: "u"}))
+	h := &PlayerHandler{}
+
+	w := httptest.NewRecorder()
+	h.HandlePrepare(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestHandlePrepare_Unauthorized(t *testing.T) {
+	req := httptest.NewRequest("POST", "/cache/prepare/x", nil)
+	h := &PlayerHandler{}
+
+	w := httptest.NewRecorder()
+	h.HandlePrepare(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", w.Code)
+	}
+}
+
+func TestHandleCacheStatus_JSON(t *testing.T) {
+	db, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	idx := cache.NewIndex(store.NewCacheStore(db), t.TempDir())
+	worker := cache.NewWorker(idx, cache.NewTranscoder(), 1)
+	if err := idx.CreateEntry("item-1", "/media/a.m4a", 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.MarkFailed("item-1", "boom"); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &PlayerHandler{cacheIndex: idx, cacheWorker: worker}
+
+	req := httptest.NewRequest("GET", "/cache/status/item-1?format=json", nil)
+	req.SetPathValue("id", "item-1")
+	w := httptest.NewRecorder()
+	h.HandleCacheStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["status"] != "failed" || resp["error"] != "boom" {
+		t.Errorf("unexpected response: %v", resp)
+	}
+	for _, k := range []string{"percent", "phase", "elapsed_sec"} {
+		if _, ok := resp[k]; !ok {
+			t.Errorf("missing field %q", k)
+		}
+	}
+}
+
+func cacheStatusJSON(t *testing.T, h *PlayerHandler, itemID string) map[string]interface{} {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/cache/status/"+itemID+"?format=json", nil)
+	req.SetPathValue("id", itemID)
+	w := httptest.NewRecorder()
+	h.HandleCacheStatus(w, req)
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	return resp
+}
+
+func TestHandleCacheStatus_EffectiveStatus(t *testing.T) {
+	db, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	idx := cache.NewIndex(store.NewCacheStore(db), t.TempDir())
+	worker := cache.NewWorker(idx, cache.NewTranscoder(), 1)
+	h := &PlayerHandler{cacheIndex: idx, cacheWorker: worker}
+
+	// "ready" in the DB but no files on disk: reported as pending.
+	if err := idx.CreateEntry("item-1", "/media/a.m4a", 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.MarkReady("item-1", 60); err != nil {
+		t.Fatal(err)
+	}
+	resp := cacheStatusJSON(t, h, "item-1")
+	if resp["status"] != "pending" || resp["percent"] != float64(0) {
+		t.Errorf("ready without files: %v", resp)
+	}
+
+	// Same entry with an active (queued) job: in_progress.
+	worker.Enqueue(cache.Job{ItemID: "item-1"})
+	resp = cacheStatusJSON(t, h, "item-1")
+	if resp["status"] != "in_progress" {
+		t.Errorf("ready without files but queued: %v", resp)
+	}
+
+	// Pending entry with a queued job: in_progress; HTML badge agrees.
+	if err := idx.CreateEntry("item-2", "/media/b.m4a", 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	worker.Enqueue(cache.Job{ItemID: "item-2"})
+	resp = cacheStatusJSON(t, h, "item-2")
+	if resp["status"] != "in_progress" {
+		t.Errorf("queued pending: %v", resp)
+	}
+}
+
+func TestEffectiveCacheStatus(t *testing.T) {
+	cases := []struct {
+		status         store.CacheStatus
+		cached, active bool
+		want           store.CacheStatus
+	}{
+		{store.CacheStatusPending, true, false, store.CacheStatusPending},
+		{store.CacheStatusPending, true, true, store.CacheStatusInProgress},
+		{store.CacheStatusReady, true, false, store.CacheStatusReady},
+		{store.CacheStatusReady, false, false, store.CacheStatusPending},
+		{store.CacheStatusReady, false, true, store.CacheStatusInProgress},
+		{store.CacheStatusFailed, true, false, store.CacheStatusFailed},
+	}
+	for _, c := range cases {
+		if got := effectiveCacheStatus(c.status, c.cached, c.active); got != c.want {
+			t.Errorf("effectiveCacheStatus(%s,%v,%v) = %s, want %s", c.status, c.cached, c.active, got, c.want)
+		}
+	}
+}
+
+func TestIPInDevices(t *testing.T) {
+	devs := []*store.SonosDevice{{IPAddress: "192.168.1.10"}, {IPAddress: "192.168.1.11"}}
+	if !ipInDevices("192.168.1.11", devs) {
+		t.Error("known IP not found")
+	}
+	if ipInDevices("169.254.169.254", devs) || ipInDevices("", devs) {
+		t.Error("unknown IP accepted")
+	}
+}
+
+func TestPreferABSPosition(t *testing.T) {
+	now := time.Now()
+	playing := &store.PlaybackSession{IsPlaying: true, LastPositionUpdate: now.Add(-time.Minute)}
+	if preferABSPosition(playing, now.UnixMilli()) {
+		t.Error("ABS must not win while playing")
+	}
+	paused := &store.PlaybackSession{LastPositionUpdate: now.Add(-time.Minute)}
+	if !preferABSPosition(paused, now.UnixMilli()) {
+		t.Error("newer ABS progress should win when paused")
+	}
+	if preferABSPosition(paused, now.Add(-time.Hour).UnixMilli()) {
+		t.Error("older ABS progress must not win")
 	}
 }

@@ -18,6 +18,9 @@ func wrapResponseWriter(w http.ResponseWriter) *responseWriter {
 	return &responseWriter{ResponseWriter: w, status: http.StatusOK}
 }
 
+// Unwrap exposes the underlying ResponseWriter to http.ResponseController.
+func (rw *responseWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
+
 func (rw *responseWriter) WriteHeader(code int) {
 	if rw.wroteHeader {
 		return
@@ -68,9 +71,12 @@ func LoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 
 // sanitizePath redacts sensitive information from URL paths.
 func sanitizePath(path string) string {
-	// Redact streaming tokens in path like /stream/{token}/file
-	if strings.HasPrefix(path, "/stream/") && strings.HasSuffix(path, "/file") {
-		return "/stream/[REDACTED]/file"
+	// Redact streaming tokens in paths like /stream/{token}/audio.m4a
+	if rest, ok := strings.CutPrefix(path, "/stream/"); ok && rest != "" {
+		if idx := strings.Index(rest, "/"); idx != -1 {
+			return "/stream/[REDACTED]" + rest[idx:]
+		}
+		return "/stream/[REDACTED]"
 	}
 	return path
 }

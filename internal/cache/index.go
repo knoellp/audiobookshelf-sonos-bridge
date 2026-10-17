@@ -174,11 +174,8 @@ func (idx *Index) CreateEntry(itemID, sourcePath string, sourceSize int64, sourc
 }
 
 // CreateEntryWithFormat creates a new pending cache entry with a specific format.
-// If an entry already exists, it is deleted first (for version migration).
+// An existing entry is replaced atomically (upsert).
 func (idx *Index) CreateEntryWithFormat(itemID, sourcePath string, sourceSize int64, sourceMtime time.Time, format string) error {
-	// Delete existing entry if any (handles version migration)
-	_ = idx.store.Delete(itemID)
-
 	entry := &store.CacheEntry{
 		ItemID:         itemID,
 		SourcePath:     sourcePath,
@@ -222,6 +219,11 @@ func (idx *Index) GetCacheDir(itemID string) string {
 // MarkFailed marks an entry as failed with an error message.
 func (idx *Index) MarkFailed(itemID string, errorText string) error {
 	return idx.store.MarkFailed(itemID, errorText)
+}
+
+// MarkPending resets an entry to pending (e.g. after a canceled job).
+func (idx *Index) MarkPending(itemID string) error {
+	return idx.store.UpdateStatus(itemID, store.CacheStatusPending, "")
 }
 
 // Delete removes a cache entry.
@@ -324,14 +326,14 @@ func (idx *Index) GetPendingItems() ([]*store.CacheEntry, error) {
 
 // CleanupTempFiles removes any leftover temporary files.
 func (idx *Index) CleanupTempFiles() error {
-	pattern := filepath.Join(idx.cacheDir, "*", "*.tmp")
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return err
-	}
-
-	for _, match := range matches {
-		os.Remove(match)
+	for _, name := range []string{"*.tmp", "*.concat.txt"} {
+		matches, err := filepath.Glob(filepath.Join(idx.cacheDir, "*", name))
+		if err != nil {
+			return err
+		}
+		for _, match := range matches {
+			os.Remove(match)
+		}
 	}
 
 	return nil

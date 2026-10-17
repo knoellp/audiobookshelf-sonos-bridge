@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"audiobookshelf-sonos-bridge/internal/abs"
@@ -15,6 +16,25 @@ type TokenDecrypter interface {
 	DecryptToken(encrypted []byte) (string, error)
 }
 
+// sessionClientProvider is implemented by decrypters that can build an ABS
+// client with automatic re-login (AuthHandler).
+type sessionClientProvider interface {
+	ClientForSession(session *store.Session) (*abs.Client, error)
+}
+
+// clientForSession builds an ABS client for a session, preferring the
+// re-login-capable provider and falling back to plain token decryption.
+func clientForSession(dec TokenDecrypter, base *abs.Client, session *store.Session) (*abs.Client, error) {
+	if p, ok := dec.(sessionClientProvider); ok {
+		return p.ClientForSession(session)
+	}
+	token, err := dec.DecryptToken(session.ABSTokenEnc)
+	if err != nil {
+		return nil, err
+	}
+	return base.WithToken(token), nil
+}
+
 // ProgressSyncer handles background progress synchronization.
 type ProgressSyncer struct {
 	absClient     *abs.Client
@@ -25,7 +45,19 @@ type ProgressSyncer struct {
 	pollInterval  time.Duration
 	syncInterval  time.Duration
 	cancel        context.CancelFunc
+	publicURL     string
+	segments      *SegmentTransitioner
+
+	// Backwards guard (see syncSession): last position PATCHed to ABS per
+	// playback row, and rows for which a user seek/resume allows the next
+	// sync to move backwards (value = time the permission expires).
+	mu             sync.Mutex
+	lastSynced     map[string]int
+	allowBackwards map[string]time.Time
 }
+
+// backwardsGrace is how long after a seek/resume a backwards sync is allowed.
+const backwardsGrace = 2 * time.Minute
 
 // NewProgressSyncer creates a new progress syncer.
 func NewProgressSyncer(
@@ -34,6 +66,8 @@ func NewProgressSyncer(
 	sessionStore *store.SessionStore,
 	deviceStore *store.DeviceStore,
 	tokenDecrypt TokenDecrypter,
+	publicURL string,
+	segments *SegmentTransitioner,
 ) *ProgressSyncer {
 	return &ProgressSyncer{
 		absClient:     absClient,
@@ -43,7 +77,53 @@ func NewProgressSyncer(
 		tokenDecrypt:  tokenDecrypt,
 		pollInterval:  5 * time.Second,
 		syncInterval:  30 * time.Second,
+		publicURL:     publicURL,
+		segments:      segments,
+
+		lastSynced:     make(map[string]int),
+		allowBackwards: make(map[string]time.Time),
 	}
+}
+
+// AllowBackwards records that the user explicitly moved the position (seek,
+// resume), so the next sync may write a position lower than the last one.
+func (s *ProgressSyncer) AllowBackwards(playbackID string) {
+	s.mu.Lock()
+	s.allowBackwards[playbackID] = time.Now().Add(backwardsGrace)
+	s.mu.Unlock()
+}
+
+// Forget drops all in-memory sync state of a deleted playback row.
+func (s *ProgressSyncer) Forget(playbackID string) {
+	s.mu.Lock()
+	delete(s.lastSynced, playbackID)
+	delete(s.allowBackwards, playbackID)
+	s.mu.Unlock()
+}
+
+// permitSync decides whether position may be PATCHed to ABS. A position below
+// the last synced one is only allowed shortly after an explicit seek/resume;
+// otherwise it is most likely a stale or reset value and would destroy
+// progress in ABS.
+func (s *ProgressSyncer) permitSync(playbackID string, position int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	last, ok := s.lastSynced[playbackID]
+	if !ok || position >= last {
+		return true
+	}
+	until, allowed := s.allowBackwards[playbackID]
+	if allowed && time.Now().Before(until) {
+		delete(s.allowBackwards, playbackID)
+		return true
+	}
+	return false
+}
+
+func (s *ProgressSyncer) recordSynced(playbackID string, position int) {
+	s.mu.Lock()
+	s.lastSynced[playbackID] = position
+	s.mu.Unlock()
 }
 
 // Start begins the background sync process.
@@ -61,6 +141,13 @@ func (s *ProgressSyncer) Start(ctx context.Context) {
 
 // Stop stops the background sync process.
 func (s *ProgressSyncer) Stop() {
+	// Final sync so that the position of the last 30 s is not lost.
+	if s.cancel != nil && s.playbackStore != nil {
+		syncCtx, syncCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		s.syncAllActive(syncCtx)
+		syncCancel()
+	}
+
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -123,7 +210,8 @@ func (s *ProgressSyncer) pollSession(ctx context.Context, playback *store.Playba
 	}
 
 	// Get position from Sonos
-	avt := sonos.NewAVTransport(device.IPAddress)
+	// Group members do not report the coordinator's transport state
+	avt := sonos.NewAVTransport(coordinatorIP(ctx, device.IPAddress))
 	posInfo, err := avt.GetPositionInfo(ctx)
 	if err != nil {
 		slog.Debug("failed to get position info",
@@ -133,18 +221,47 @@ func (s *ProgressSyncer) pollSession(ctx context.Context, playback *store.Playba
 		return
 	}
 
+	// Sonos may be playing something else (radio, another app); that must
+	// never be written to ABS as audiobook progress.
+	if !isBridgeStream(posInfo.TrackURI, s.publicURL) {
+		slog.Info("sonos is not playing a bridge stream, marking playback stopped",
+			"session_id", playback.SessionID,
+			"track_uri", posInfo.TrackURI,
+		)
+		s.playbackStore.UpdatePlaying(playback.ID, false)
+		return
+	}
+
 	// Parse position
 	relTime := sonos.ParseDuration(posInfo.RelTime)
 	positionSec := int(relTime.Seconds())
-
-	// Check if playback has ended
 	trackDuration := sonos.ParseDuration(posInfo.TrackDuration)
+
+	// Near the end of a segment: switch to the next one, independent of any
+	// open browser tab.
+	if playback.SegmentDurationSec > 0 && s.segments != nil && trackDuration > 0 &&
+		relTime >= trackDuration-10*time.Second && s.segments.HasNextSegment(playback) {
+		if _, err := s.segments.Transition(ctx, playback, device); err != nil {
+			slog.Warn("segment transition failed",
+				"session_id", playback.SessionID,
+				"item_id", playback.ItemID,
+				"error", err,
+			)
+		}
+		return
+	}
+
+	// Track (or last segment) has ended
 	if trackDuration > 0 && relTime >= trackDuration-time.Second {
-		// Track has ended
 		slog.Info("playback ended",
 			"session_id", playback.SessionID,
 			"item_id", playback.ItemID,
 		)
+		// Final position update and sync before marking as stopped
+		endPos := globalPosition(playback, int(trackDuration.Seconds()))
+		s.playbackStore.UpdatePosition(playback.ID, endPos)
+		playback.PositionSec = endPos
+		s.syncSession(ctx, playback)
 		s.playbackStore.UpdatePlaying(playback.ID, false)
 		return
 	}
@@ -159,10 +276,7 @@ func (s *ProgressSyncer) pollSession(ctx context.Context, playback *store.Playba
 	}
 
 	// For segmented playback, convert local segment position to global position
-	globalPosSec := positionSec
-	if playback.SegmentDurationSec > 0 {
-		globalPosSec = store.SegmentToGlobal(playback.CurrentSegment, positionSec, playback.SegmentDurationSec)
-	}
+	globalPosSec := globalPosition(playback, positionSec)
 
 	// Update stored position
 	if globalPosSec != playback.PositionSec {
@@ -185,6 +299,15 @@ func (s *ProgressSyncer) syncAllActive(ctx context.Context) {
 
 // syncSession syncs a single playback session to Audiobookshelf.
 func (s *ProgressSyncer) syncSession(ctx context.Context, playback *store.PlaybackSession) {
+	if !s.permitSync(playback.ID, playback.PositionSec) {
+		slog.Warn("skipping ABS sync: position is behind last synced position and no seek happened",
+			"session_id", playback.SessionID,
+			"item_id", playback.ItemID,
+			"position_sec", playback.PositionSec,
+		)
+		return
+	}
+
 	// Get user session for token
 	session, err := s.sessionStore.Get(playback.SessionID)
 	if err != nil || session == nil {
@@ -192,15 +315,11 @@ func (s *ProgressSyncer) syncSession(ctx context.Context, playback *store.Playba
 		return
 	}
 
-	// Decrypt the token
-	token, err := s.tokenDecrypt.DecryptToken(session.ABSTokenEnc)
+	client, err := clientForSession(s.tokenDecrypt, s.absClient, session)
 	if err != nil {
-		slog.Warn("failed to decrypt token", "session_id", playback.SessionID, "error", err)
+		slog.Warn("failed to create ABS client", "session_id", playback.SessionID, "error", err)
 		return
 	}
-
-	// Create client with user's token
-	client := s.absClient.WithToken(token)
 
 	// Build progress update
 	progress := float64(0)
@@ -223,6 +342,8 @@ func (s *ProgressSyncer) syncSession(ctx context.Context, playback *store.Playba
 		)
 		return
 	}
+
+	s.recordSynced(playback.ID, playback.PositionSec)
 
 	// Update sync timestamp
 	s.playbackStore.UpdateABSSyncTime(playback.ID)

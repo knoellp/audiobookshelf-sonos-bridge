@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"audiobookshelf-sonos-bridge/internal/abs"
@@ -218,7 +219,20 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 		items[i] = convertItem(&item)
 	}
 
+	// The items list has no per-item progress; fill it from the user's media progress.
+	if progressMap, perr := absClient.GetMediaProgressMap(ctx); perr != nil {
+		slog.Debug("failed to fetch media progress", "error", perr)
+	} else {
+		for i := range items {
+			items[i].Progress = progressMap[items[i].ID]
+		}
+	}
+
 	hasMore := offset+len(items) < itemsResp.Total
+	if query != "" {
+		// The search endpoint has no offset, so it cannot be paginated
+		hasMore = false
+	}
 
 	data := map[string]interface{}{
 		"Title":             libraryName,
@@ -229,6 +243,7 @@ func (h *LibraryHandler) HandleLibraryItems(w http.ResponseWriter, r *http.Reque
 		"Items":             items,
 		"Total":             itemsResp.Total,
 		"Query":             query,
+		"Filter":            filter,
 		"Sort":              sort,
 		"View":              view,
 		"Limit":             limit,
@@ -381,7 +396,7 @@ func (h *LibraryHandler) HandleRecent(w http.ResponseWriter, r *http.Request) {
 	// Convert to RecentItem format
 	items := make([]RecentItem, len(itemsInProgress))
 	for i, item := range itemsInProgress {
-		author := ""
+		author := item.Media.Metadata.AuthorName
 		if len(item.Media.Metadata.Authors) > 0 {
 			author = item.Media.Metadata.Authors[0].Name
 		}
@@ -479,42 +494,66 @@ func (h *LibraryHandler) HandleSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
-	// Build series items with composite covers (limit to first 4 book covers per series)
-	seriesItems := make([]SeriesItem, 0, len(filterData.Series))
-	for _, s := range filterData.Series {
+	// Build series items with composite covers (limit to first 4 book covers per series).
+	// Requests run concurrently (bounded); failed series are skipped, order is preserved.
+	type seriesResult struct {
+		item SeriesItem
+		ok   bool
+	}
+	results := make([]seriesResult, len(filterData.Series))
+	sem := make(chan struct{}, 5)
+	var wg sync.WaitGroup
+	for i, s := range filterData.Series {
 		if s.Name == "" {
 			continue
 		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, s abs.FilterSeries) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		// Fetch books for this series (limit to 4 for composite cover)
-		// ABS uses URL-safe base64 encoding for filter values
-		encodedID := base64.URLEncoding.EncodeToString([]byte(s.ID))
-		filter := fmt.Sprintf("series.%s", encodedID)
+			// Fetch books for this series (limit to 4 for composite cover)
+			// ABS uses URL-safe base64 encoding for filter values
+			encodedID := base64.URLEncoding.EncodeToString([]byte(s.ID))
+			filter := fmt.Sprintf("series.%s", encodedID)
 
-		booksResp, err := absClient.GetLibraryItems(ctx, libraryID, abs.ItemsOptions{
-			Filter: filter,
-			Limit:  4,
-			Sort:   "media.metadata.title",
-		})
-		if err != nil {
-			continue
-		}
-
-		// Build cover URLs for composite
-		coverURLs := make([]string, 0, len(booksResp.Results))
-		for _, book := range booksResp.Results {
-			if book.Media.CoverPath != "" {
-				coverURLs = append(coverURLs, fmt.Sprintf("/cover/%s", book.ID))
+			booksResp, err := absClient.GetLibraryItems(ctx, libraryID, abs.ItemsOptions{
+				Filter: filter,
+				Limit:  4,
+				Sort:   "media.metadata.title",
+			})
+			if err != nil {
+				slog.Debug("skipping series, items request failed", "series_id", s.ID, "error", err)
+				return
 			}
-		}
 
-		seriesItems = append(seriesItems, SeriesItem{
-			ID:        s.ID,
-			Name:      s.Name,
-			BookCount: booksResp.Total,
-			CoverURLs: coverURLs,
-		})
+			// Build cover URLs for composite
+			coverURLs := make([]string, 0, len(booksResp.Results))
+			for _, book := range booksResp.Results {
+				if book.Media.CoverPath != "" {
+					coverURLs = append(coverURLs, fmt.Sprintf("/cover/%s", book.ID))
+				}
+			}
+
+			results[i] = seriesResult{
+				item: SeriesItem{
+					ID:        s.ID,
+					Name:      s.Name,
+					BookCount: booksResp.Total,
+					CoverURLs: coverURLs,
+				},
+				ok: true,
+			}
+		}(i, s)
+	}
+	wg.Wait()
+
+	seriesItems := make([]SeriesItem, 0, len(filterData.Series))
+	for _, r := range results {
+		if r.ok {
+			seriesItems = append(seriesItems, r.item)
+		}
 	}
 
 	data := map[string]interface{}{
@@ -1000,7 +1039,7 @@ type SimplifiedItem struct {
 }
 
 func convertItem(item *abs.LibraryItem) SimplifiedItem {
-	author := ""
+	author := item.Media.Metadata.AuthorName
 	if len(item.Media.Metadata.Authors) > 0 {
 		author = item.Media.Metadata.Authors[0].Name
 	}
@@ -1019,6 +1058,7 @@ func (h *LibraryHandler) render(w http.ResponseWriter, name string, data interfa
 
 	// Parse templates fresh for each request to avoid Clone issues
 	funcMap := template.FuncMap{
+		"formatHMS": formatDurationSec,
 		"formatDuration": func(seconds int) string {
 			hours := seconds / 3600
 			minutes := (seconds % 3600) / 60

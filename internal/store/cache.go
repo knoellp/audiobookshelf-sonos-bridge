@@ -56,14 +56,19 @@ func (e *CacheEntry) GetSegmentFileName(segmentIndex int) string {
 		}
 	}
 	// Segmented - use segment naming
-	ext := ".m4a"
-	switch e.CacheFormat {
+	return fmt.Sprintf("segment_%03d%s", segmentIndex, SegmentExt(e.CacheFormat))
+}
+
+// SegmentExt returns the file extension (with dot) used for segment files of the given cache format.
+func SegmentExt(format string) string {
+	switch format {
 	case "mp3":
-		ext = ".mp3"
+		return ".mp3"
 	case "flac":
-		ext = ".flac"
+		return ".flac"
+	default:
+		return ".m4a"
 	}
-	return fmt.Sprintf("segment_%03d%s", segmentIndex, ext)
 }
 
 // GlobalToSegment converts a global position to segment index and local position.
@@ -91,11 +96,24 @@ func NewCacheStore(db *DB) *CacheStore {
 	return &CacheStore{db: db.Conn()}
 }
 
-// Create inserts a new cache entry.
+// Create inserts a cache entry, replacing an existing entry for the same item atomically.
 func (s *CacheStore) Create(entry *CacheEntry) error {
 	query := `
 		INSERT INTO cache_index (item_id, source_path, source_size, source_mtime, profile_version, cache_path, cache_format, duration_sec, segment_count, segment_duration_sec, status, error_text, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(item_id) DO UPDATE SET
+			source_path = excluded.source_path,
+			source_size = excluded.source_size,
+			source_mtime = excluded.source_mtime,
+			profile_version = excluded.profile_version,
+			cache_path = excluded.cache_path,
+			cache_format = excluded.cache_format,
+			duration_sec = excluded.duration_sec,
+			segment_count = excluded.segment_count,
+			segment_duration_sec = excluded.segment_duration_sec,
+			status = excluded.status,
+			error_text = excluded.error_text,
+			updated_at = excluded.updated_at
 	`
 	now := time.Now().Unix()
 	cacheFormat := entry.CacheFormat

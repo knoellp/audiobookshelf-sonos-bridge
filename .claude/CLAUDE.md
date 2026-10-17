@@ -10,6 +10,8 @@ Audiobookshelf Sonos Bridge - A local service that enables audiobook playback fr
 
 **Die App läuft IMMER als Docker Container. Niemals direkt ausführen!**
 
+**Container NUR nach Rückfrage neu starten!** Code ändern, Tests laufen lassen, Diff zeigen – aber `docker compose up --build -d`, `restart` oder `down` erst, wenn der Nutzer es ausdrücklich freigibt. Ein Neustart unterbricht laufende Wiedergaben auf den Sonos-Geräten.
+
 ### App starten (Build + Run):
 ```bash
 docker compose up --build -d
@@ -139,6 +141,7 @@ Host network mode is recommended for reliable UPnP device discovery.
 | `BRIDGE_ABS_URL` | Audiobookshelf server URL | Required |
 | `BRIDGE_PUBLIC_URL` | Public URL for streaming | Required |
 | `BRIDGE_SESSION_SECRET` | 32+ char secret for encryption | Auto-generated |
+| `BRIDGE_SESSION_MAX_IDLE` | Delete sessions unused for this long (Go duration, e.g. `2160h`); empty = never | – |
 | `BRIDGE_PORT` | HTTP server port | `8080` |
 | `BRIDGE_MEDIA_DIR` | Media directory inside container | `/media` |
 | `BRIDGE_CACHE_DIR` | Cache directory | `/cache` |

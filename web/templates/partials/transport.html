@@ -10,7 +10,7 @@
 
     <!-- Progress Bar with Chapters -->
     <div class="progress-container">
-        <span class="time" id="position">{{if .Playback}}{{.Playback.PositionSec | formatDuration}}{{else}}0:00{{end}}</span>
+        <span class="time" id="position">{{if .Playback}}{{.Playback.PositionSec | formatHMS}}{{else}}0:00{{end}}</span>
         <div class="progress-wrapper">
             <input type="range"
                    id="progress-slider"
@@ -23,7 +23,7 @@
             <!-- Chapter markers -->
             <div class="chapter-markers" id="chapter-markers"></div>
         </div>
-        <span class="time" id="duration">{{if .Playback}}{{.Playback.DurationSec | formatDuration}}{{else}}0:00{{end}}</span>
+        <span class="time" id="duration">{{if .Playback}}{{.Playback.DurationSec | formatHMS}}{{else}}0:00{{end}}</span>
         <input type="hidden" id="progress-input" value="{{if .Playback}}{{.Playback.PositionSec}}{{else}}0{{end}}">
         <input type="hidden" id="duration-input" value="{{if .Playback}}{{.Playback.DurationSec}}{{else}}0{{end}}">
     </div>
@@ -101,6 +101,8 @@
         </button>
         {{end}}
     </div>
+
+    <div id="prepare-status" class="prepare-status" style="display:none"></div>
 
     <div class="volume-controls">
         <div class="volume-mute-wrapper">
@@ -960,10 +962,17 @@ async function setSleepTimer(minutes) {
     }
 }
 
+// Sleep timer end time is stored per item so it does not leak into other books
+function sleepTimerStorageKey() {
+    var container = document.getElementById('player-container');
+    var itemId = container ? container.dataset.itemId : '';
+    return 'sleepTimerEndTime:' + itemId;
+}
+
 function activateSleepTimerUI(remainingSec) {
     sleepTimerActive = true;
     sleepTimerEndTime = Date.now() + (remainingSec * 1000);
-    localStorage.setItem('sleepTimerEndTime', sleepTimerEndTime);
+    localStorage.setItem(sleepTimerStorageKey(), sleepTimerEndTime);
 
     // Update button label
     const label = document.getElementById('sleep-timer-label');
@@ -1010,7 +1019,7 @@ function updateSleepCountdown() {
 function clearSleepTimerUI() {
     sleepTimerActive = false;
     sleepTimerEndTime = null;
-    localStorage.removeItem('sleepTimerEndTime');
+    localStorage.removeItem(sleepTimerStorageKey());
 
     if (sleepCountdownInterval) {
         clearInterval(sleepCountdownInterval);
@@ -1068,14 +1077,14 @@ function updateSleepTimerFromStatus(remainingSec) {
 
 // Restore sleep timer from localStorage on page load
 (function() {
-    var saved = localStorage.getItem('sleepTimerEndTime');
+    var saved = localStorage.getItem(sleepTimerStorageKey());
     if (saved) {
         var endTime = parseFloat(saved);
         var remaining = Math.floor((endTime - Date.now()) / 1000);
         if (remaining > 0) {
             activateSleepTimerUI(remaining);
         } else {
-            localStorage.removeItem('sleepTimerEndTime');
+            localStorage.removeItem(sleepTimerStorageKey());
         }
     }
 })();

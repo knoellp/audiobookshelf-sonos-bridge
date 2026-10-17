@@ -41,7 +41,7 @@
                 </span>
                 <span class="meta-item cache-status-meta" id="cache-status-container">
                     <span id="cache-status-badge"></span>
-                    <span id="cache-status-text">Checking...</span>
+                    <span id="cache-status-text">Prüfe …</span>
                 </span>
             </div>
 
@@ -58,6 +58,9 @@
                     </svg>
                     <span id="play-btn-text">Play</span>
                 </button>
+                <button type="button" class="btn btn-secondary" id="prepare-btn" onclick="prepareThisItem()" style="display:none">
+                    Vorab laden
+                </button>
             </div>
         </div>
     </div>
@@ -67,7 +70,12 @@
 <div id="loading-overlay" class="loading-overlay" style="display: none;">
     <div class="loading-content">
         <div class="loading-spinner"></div>
-        <p id="loading-message">Preparing audiobook...</p>
+        <p id="loading-message">Hörbuch wird vorbereitet …</p>
+        <div id="overlay-bar" class="overlay-bar" style="display:none"><div id="overlay-bar-fill" class="overlay-bar-fill"></div></div>
+        <div class="overlay-actions">
+            <button type="button" class="btn btn-secondary" id="overlay-retry" onclick="retryPrepare()" style="display:none">Erneut versuchen</button>
+            <button type="button" class="btn btn-secondary" id="overlay-close" onclick="closeOverlay()" style="display:none">Schließen</button>
+        </div>
     </div>
 </div>
 
@@ -75,42 +83,120 @@
 const itemId = '{{.Item.ID}}';
 let cacheStatus = 'unknown';
 
-// Check cache status on load
+let pollTimer = null;
+let overlayMode = false; // true while the preparation overlay is shown
+
+function setStatusText(dotClass, text) {
+    document.getElementById('cache-status-badge').className = 'status-dot ' + dotClass;
+    document.getElementById('cache-status-text').textContent = text;
+}
+
+function updatePrepareButton() {
+    const prepareBtn = document.getElementById('prepare-btn');
+    if (prepareBtn) {
+        prepareBtn.style.display = (cacheStatus === 'pending' || cacheStatus === 'failed') ? '' : 'none';
+    }
+}
+
+function showOverlayProgress(pct) {
+    document.getElementById('loading-message').textContent =
+        'Hörbuch wird vorbereitet … ' + pct + ' %. Du kannst die Seite verlassen, die Vorbereitung läuft weiter.';
+    document.getElementById('overlay-bar').style.display = 'block';
+    document.getElementById('overlay-bar-fill').style.width = pct + '%';
+    document.getElementById('overlay-close').style.display = '';
+    document.getElementById('overlay-retry').style.display = 'none';
+}
+
+function showOverlayError(message) {
+    document.getElementById('loading-message').textContent = 'Vorbereitung fehlgeschlagen: ' + message;
+    document.getElementById('overlay-bar').style.display = 'none';
+    document.getElementById('overlay-close').style.display = '';
+    document.getElementById('overlay-retry').style.display = '';
+    document.querySelector('#loading-overlay .loading-spinner').style.display = 'none';
+}
+
+function closeOverlay() {
+    overlayMode = false;
+    document.getElementById('loading-overlay').style.display = 'none';
+    document.querySelector('#loading-overlay .loading-spinner').style.display = '';
+    const btn = document.getElementById('play-btn');
+    btn.disabled = (cacheStatus === 'in_progress');
+    document.getElementById('play-btn-text').textContent = 'Play';
+}
+
+// Check cache status (JSON) and update the UI
 async function checkCacheStatus() {
+    if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+    }
     try {
-        const response = await fetch('/cache/status/' + itemId);
-        const html = await response.text();
+        const response = await fetch('/cache/status/' + itemId + '?format=json');
+        const data = await response.json();
+        cacheStatus = data.status;
+        const btn = document.getElementById('play-btn');
 
-        const container = document.getElementById('cache-status-container');
-        const badge = document.getElementById('cache-status-badge');
-        const text = document.getElementById('cache-status-text');
-
-        // Check for specific class to avoid "Not cached" matching "cached"
-        if (html.includes('cache-badge cached')) {
-            cacheStatus = 'ready';
-            badge.className = 'status-dot status-cached';
-            text.textContent = 'Ready to play';
-        } else if (html.includes('cache-badge in_progress')) {
-            cacheStatus = 'in_progress';
-            badge.className = 'status-dot status-progress';
-            text.textContent = 'Transcoding...';
-            // Poll again in 3 seconds
-            setTimeout(checkCacheStatus, 3000);
+        if (data.status === 'ready') {
+            setStatusText('status-cached', 'Bereit zum Abspielen');
+            btn.disabled = false;
+            if (overlayMode) {
+                overlayMode = false;
+                playItem(); // cache is ready - start playback automatically
+            }
+        } else if (data.status === 'in_progress') {
+            const pct = data.percent || 0;
+            setStatusText('status-progress', 'Wird vorbereitet … ' + pct + ' %');
+            btn.disabled = true;
+            if (overlayMode) showOverlayProgress(pct);
+            pollTimer = setTimeout(checkCacheStatus, 2000);
+        } else if (data.status === 'failed') {
+            setStatusText('status-failed', 'Fehlgeschlagen: ' + (data.error || 'Unbekannter Fehler'));
+            btn.disabled = false;
+            if (overlayMode) showOverlayError(data.error || 'Unbekannter Fehler');
         } else {
-            cacheStatus = 'pending';
-            badge.className = 'status-dot status-pending';
-            text.textContent = 'Not cached (will transcode on play)';
+            setStatusText('status-pending', 'Nicht im Cache');
+            btn.disabled = false;
         }
+        updatePrepareButton();
     } catch (err) {
         console.error('Failed to check cache status:', err);
+        pollTimer = setTimeout(checkCacheStatus, 4000);
     }
+}
+
+// Queue the item for background caching ("Vorab laden" / "Erneut versuchen")
+async function prepareThisItem() {
+    try {
+        const response = await fetch('/cache/prepare/' + itemId, { method: 'POST' });
+        if (response.status === 503) {
+            alert('Warteschlange voll, bitte später erneut versuchen.');
+            return;
+        }
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status);
+        }
+    } catch (err) {
+        console.error('Prepare failed:', err);
+        alert('Vorbereitung konnte nicht gestartet werden.');
+        return;
+    }
+    cacheStatus = 'in_progress';
+    document.getElementById('play-btn').disabled = true;
+    updatePrepareButton();
+    checkCacheStatus();
+}
+
+async function retryPrepare() {
+    document.querySelector('#loading-overlay .loading-spinner').style.display = '';
+    document.getElementById('loading-message').textContent = 'Hörbuch wird vorbereitet …';
+    await prepareThisItem();
 }
 
 function playItem() {
     const sonosUUID = localStorage.getItem('selectedSonosUUID');
 
     if (!sonosUUID) {
-        alert('Please select a Sonos device first');
+        alert('Bitte wähle zuerst einen Sonos-Lautsprecher aus.');
         document.getElementById('sonos-picker-toggle')?.click();
         return;
     }
@@ -122,16 +208,9 @@ function playItem() {
 
     // Show loading state
     btn.disabled = true;
-    btnText.textContent = 'Starting...';
-
-    // Show overlay if transcoding is needed
-    if (cacheStatus !== 'ready') {
-        overlay.style.display = 'flex';
-        loadingMessage.textContent = 'Transcoding audiobook... This may take a moment.';
-    } else {
-        overlay.style.display = 'flex';
-        loadingMessage.textContent = 'Starting playback...';
-    }
+    btnText.textContent = 'Starte …';
+    overlay.style.display = 'flex';
+    loadingMessage.textContent = 'Wiedergabe wird gestartet …';
 
     const formData = new FormData();
     formData.append('item_id', itemId);
@@ -142,11 +221,24 @@ function playItem() {
         body: formData
     })
     .then(response => {
+        if (response.status === 202) {
+            // Cache is being prepared in the background - show progress and poll
+            overlayMode = true;
+            cacheStatus = 'in_progress';
+            updatePrepareButton();
+            showOverlayProgress(0);
+            checkCacheStatus();
+            return null;
+        }
+        if (response.status === 503) {
+            const e = new Error('queue full');
+            e.queueFull = true;
+            throw e;
+        }
         if (response.ok) {
             return response.json();
-        } else {
-            throw new Error('Failed to start playback');
         }
+        throw new Error('Failed to start playback');
     })
     .then(data => {
         if (data && data.redirect) {
@@ -155,7 +247,7 @@ function playItem() {
     })
     .catch(err => {
         console.error('Play failed:', err);
-        alert('Failed to start playback. Please try again.');
+        alert(err.queueFull ? 'Warteschlange voll, bitte später erneut versuchen.' : 'Wiedergabe konnte nicht gestartet werden. Bitte erneut versuchen.');
         overlay.style.display = 'none';
         btn.disabled = false;
         btnText.textContent = 'Play';
@@ -288,6 +380,37 @@ document.addEventListener('DOMContentLoaded', checkCacheStatus);
 
 .status-pending {
     background: #eab308;
+}
+
+.status-failed {
+    background: #ef4444;
+}
+
+.overlay-bar {
+    width: 260px;
+    height: 8px;
+    margin: 1rem auto 0;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.overlay-bar-fill {
+    height: 100%;
+    width: 0;
+    background: var(--primary-color);
+    transition: width 0.5s;
+}
+
+.overlay-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    margin-top: 1.25rem;
+}
+
+.loading-content {
+    max-width: 90vw;
 }
 
 @keyframes pulse {

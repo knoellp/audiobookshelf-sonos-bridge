@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -354,6 +355,103 @@ func TestWorker_QueueFull(t *testing.T) {
 	}
 }
 
+func TestWorker_Enqueue_Dedupe(t *testing.T) {
+	worker := NewWorker(nil, nil, 1)
+
+	if !worker.Enqueue(Job{ItemID: "item-1"}) {
+		t.Fatal("first enqueue should succeed")
+	}
+	if !worker.IsActive("item-1") {
+		t.Error("expected item to be active after enqueue")
+	}
+	if worker.Enqueue(Job{ItemID: "item-1"}) {
+		t.Error("second enqueue for same item should be rejected")
+	}
+	// A queued job is promoted by a priority enqueue, but only once.
+	if !worker.EnqueuePriority(Job{ItemID: "item-1"}) {
+		t.Error("priority enqueue for queued item should promote it")
+	}
+	if worker.EnqueuePriority(Job{ItemID: "item-1"}) {
+		t.Error("priority enqueue for already promoted item should be rejected")
+	}
+	if worker.IsActive("item-2") {
+		t.Error("unknown item should not be active")
+	}
+}
+
+func TestWorker_PriorityFirst(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+	idx := NewIndex(store.NewCacheStore(db), t.TempDir())
+	worker := NewWorker(idx, NewTranscoder(), 1)
+
+	order := make(chan string, 2)
+	worker.onStart = func(j Job) { order <- j.ItemID }
+
+	// Queue before starting the pool so both are waiting.
+	worker.Enqueue(Job{ItemID: "normal"})
+	worker.EnqueuePriority(Job{ItemID: "priority"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	worker.Start(ctx)
+	defer worker.Stop()
+
+	first := <-order
+	if first != "priority" {
+		t.Errorf("expected priority job first, got %s", first)
+	}
+	<-order
+}
+
+func TestWorker_Progress(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+	idx := NewIndex(store.NewCacheStore(db), t.TempDir())
+	worker := NewWorker(idx, NewTranscoder(), 1)
+
+	old := progressInterval
+	progressInterval = 10 * time.Millisecond
+	defer func() { progressInterval = old }()
+
+	src := filepath.Join(t.TempDir(), "src.m4a")
+	if err := os.WriteFile(src, make([]byte, 1000), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.EnsureDirectory("item-1"); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(idx.GetCacheDir("item-1"), "audio.m4a")
+	if err := os.WriteFile(out, make([]byte, 500), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := worker.trackProgress("item-1", []string{src}, false, 0)
+	worker.setPhase("item-1", PhaseRemux)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var p JobProgress
+	for time.Now().Before(deadline) {
+		var ok bool
+		p, ok = worker.Progress("item-1")
+		if ok && p.Percent > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if p.Phase != PhaseRemux {
+		t.Errorf("expected phase remux, got %q", p.Phase)
+	}
+	if p.Percent != 50 {
+		t.Errorf("expected 50 percent, got %d", p.Percent)
+	}
+
+	stop()
+	if _, ok := worker.Progress("item-1"); ok {
+		t.Error("progress should be removed after job finished")
+	}
+}
+
 func TestTranscoder_EstimateOutputSize(t *testing.T) {
 	tc := NewTranscoder()
 
@@ -464,5 +562,148 @@ func TestIndex_WaitForReady_Failed(t *testing.T) {
 	err := idx.waitForReady(ctx, "item-1")
 	if err == nil {
 		t.Error("expected error for failed transcoding")
+	}
+}
+
+func TestSmartTranscodeMultiple_ReportsActualFormat(t *testing.T) {
+	for _, bin := range []string{"ffmpeg", "ffprobe"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available", bin)
+		}
+	}
+	dir := t.TempDir()
+	gen := func(name string, codecArgs ...string) string {
+		path := filepath.Join(dir, name)
+		args := append([]string{"-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1"}, codecArgs...)
+		args = append(args, path)
+		if out, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil {
+			t.Skipf("cannot generate test audio (%s): %v: %s", name, err, out)
+		}
+		return path
+	}
+	aac := gen("a.m4a", "-c:a", "aac")
+	mp3 := gen("b.mp3", "-c:a", "libmp3lame")
+
+	tr := NewTranscoder()
+	out := filepath.Join(dir, "out.m4a")
+	res, format, err := tr.SmartTranscodeMultiple(context.Background(), []string{aac, mp3}, out)
+	if err != nil {
+		t.Fatalf("SmartTranscodeMultiple: %v", err)
+	}
+	if format != "mp3" {
+		t.Errorf("mixed codecs: format = %q, want mp3", format)
+	}
+	if res == nil || res.DurationSec < 1 {
+		t.Errorf("unexpected result: %+v", res)
+	}
+}
+
+func TestWorker_PromoteQueuedJob(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+	idx := NewIndex(store.NewCacheStore(db), t.TempDir())
+	worker := NewWorker(idx, NewTranscoder(), 1)
+
+	order := make(chan string, 3)
+	worker.onStart = func(j Job) { order <- j.ItemID }
+
+	// Two regular jobs; "second" is then promoted by a user request.
+	worker.Enqueue(Job{ItemID: "first"})
+	worker.Enqueue(Job{ItemID: "second"})
+	if !worker.EnqueuePriority(Job{ItemID: "second"}) {
+		t.Fatal("promotion of a queued job should succeed")
+	}
+	if worker.EnqueuePriority(Job{ItemID: "second"}) {
+		t.Error("second promotion should be rejected")
+	}
+	if !worker.IsActive("second") {
+		t.Error("promoted job should be active")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	worker.Start(ctx)
+	defer worker.Stop()
+
+	got := []string{<-order, <-order}
+	if got[0] != "second" || got[1] != "first" {
+		t.Errorf("expected [second first], got %v", got)
+	}
+
+	// The stale copy of "second" in the regular queue must be skipped.
+	select {
+	case extra := <-order:
+		t.Errorf("job ran twice: %s", extra)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestWorker_CanceledJobResetsToPending(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+	idx := NewIndex(store.NewCacheStore(db), t.TempDir())
+	worker := NewWorker(idx, NewTranscoder(), 1)
+
+	src := filepath.Join(t.TempDir(), "src.mp3")
+	if err := os.WriteFile(src, make([]byte, 100), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.CreateEntry("item-1", src, 100, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	worker.processJob(ctx, Job{ItemID: "item-1", SourcePaths: []string{src}})
+
+	entry, err := idx.GetEntry("item-1")
+	if err != nil || entry == nil {
+		t.Fatalf("GetEntry: %v %v", entry, err)
+	}
+	if entry.Status != store.CacheStatusPending {
+		t.Errorf("canceled job: status = %s, want pending", entry.Status)
+	}
+}
+
+func TestWorker_NeedsSegmentation_EstimatesUnknownDuration(t *testing.T) {
+	for _, bin := range []string{"ffmpeg", "ffprobe"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available", bin)
+		}
+	}
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.mp3")
+	if out, err := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=10",
+		"-ar", "16000", "-b:a", "8k", "-c:a", "libmp3lame", good).CombinedOutput(); err != nil {
+		t.Skipf("cannot generate test audio: %v: %s", err, out)
+	}
+	fi, err := os.Stat(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A broken file as large as 1000 good files (~10000 s) must be estimated.
+	broken := filepath.Join(dir, "broken.mp3")
+	if err := os.WriteFile(broken, make([]byte, fi.Size()*1000), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := NewWorker(nil, NewTranscoder(), 1)
+	ctx := context.Background()
+
+	need, err := w.needsSegmentation(ctx, []string{good, broken})
+	if err != nil {
+		t.Fatalf("needsSegmentation: %v", err)
+	}
+	if !need {
+		t.Error("estimated duration of unknown file should require segmentation")
+	}
+
+	need, err = w.needsSegmentation(ctx, []string{good})
+	if err != nil || need {
+		t.Errorf("short file: need=%v err=%v", need, err)
+	}
+
+	if _, err := w.needsSegmentation(ctx, []string{broken}); err == nil {
+		t.Error("expected error when no duration is known")
 	}
 }

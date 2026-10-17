@@ -10,12 +10,14 @@ import (
 type Session struct {
 	ID          string
 	ABSTokenEnc []byte // AES-256-GCM encrypted Audiobookshelf token
-	ABSToken    string // Decrypted token (populated by auth handler)
-	ABSUserID   string
-	UserID      string // Alias for ABSUserID
-	ABSUsername string
-	CreatedAt   time.Time
-	LastUsedAt  time.Time
+	// ABSPasswordEnc is the AES-256-GCM encrypted ABS password (nil for legacy sessions).
+	ABSPasswordEnc []byte
+	ABSToken       string // Decrypted token (populated by auth handler)
+	ABSUserID      string
+	UserID         string // Alias for ABSUserID
+	ABSUsername    string
+	CreatedAt      time.Time
+	LastUsedAt     time.Time
 }
 
 // SessionStore provides CRUD operations for sessions.
@@ -31,12 +33,13 @@ func NewSessionStore(db *DB) *SessionStore {
 // Create inserts a new session.
 func (s *SessionStore) Create(session *Session) error {
 	query := `
-		INSERT INTO sessions (id, abs_token_enc, abs_user_id, abs_username, created_at, last_used_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO sessions (id, abs_token_enc, abs_password_enc, abs_user_id, abs_username, created_at, last_used_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := s.db.Exec(query,
 		session.ID,
 		session.ABSTokenEnc,
+		session.ABSPasswordEnc,
 		session.ABSUserID,
 		session.ABSUsername,
 		session.CreatedAt.Unix(),
@@ -48,7 +51,7 @@ func (s *SessionStore) Create(session *Session) error {
 // Get retrieves a session by ID.
 func (s *SessionStore) Get(id string) (*Session, error) {
 	query := `
-		SELECT id, abs_token_enc, abs_user_id, abs_username, created_at, last_used_at
+		SELECT id, abs_token_enc, abs_password_enc, abs_user_id, abs_username, created_at, last_used_at
 		FROM sessions WHERE id = ?
 	`
 	row := s.db.QueryRow(query, id)
@@ -59,6 +62,7 @@ func (s *SessionStore) Get(id string) (*Session, error) {
 	err := row.Scan(
 		&session.ID,
 		&session.ABSTokenEnc,
+		&session.ABSPasswordEnc,
 		&session.ABSUserID,
 		&session.ABSUsername,
 		&createdAt,
@@ -76,6 +80,13 @@ func (s *SessionStore) Get(id string) (*Session, error) {
 	session.LastUsedAt = time.Unix(lastUsedAt, 0)
 
 	return &session, nil
+}
+
+// UpdateCredentials replaces the encrypted token and password of a session.
+func (s *SessionStore) UpdateCredentials(id string, tokenEnc, passwordEnc []byte) error {
+	_, err := s.db.Exec(`UPDATE sessions SET abs_token_enc = ?, abs_password_enc = ? WHERE id = ?`,
+		tokenEnc, passwordEnc, id)
+	return err
 }
 
 // UpdateLastUsed updates the last_used_at timestamp.
@@ -105,7 +116,7 @@ func (s *SessionStore) DeleteOlderThan(since time.Time) (int64, error) {
 // List returns all sessions.
 func (s *SessionStore) List() ([]*Session, error) {
 	query := `
-		SELECT id, abs_token_enc, abs_user_id, abs_username, created_at, last_used_at
+		SELECT id, abs_token_enc, abs_password_enc, abs_user_id, abs_username, created_at, last_used_at
 		FROM sessions ORDER BY last_used_at DESC
 	`
 	rows, err := s.db.Query(query)
@@ -122,6 +133,7 @@ func (s *SessionStore) List() ([]*Session, error) {
 		err := rows.Scan(
 			&session.ID,
 			&session.ABSTokenEnc,
+			&session.ABSPasswordEnc,
 			&session.ABSUserID,
 			&session.ABSUsername,
 			&createdAt,
@@ -144,7 +156,7 @@ func (s *SessionStore) List() ([]*Session, error) {
 func (s *SessionStore) ListActive() ([]*Session, error) {
 	cutoff := time.Now().Add(-24 * time.Hour).Unix()
 	query := `
-		SELECT id, abs_token_enc, abs_user_id, abs_username, created_at, last_used_at
+		SELECT id, abs_token_enc, abs_password_enc, abs_user_id, abs_username, created_at, last_used_at
 		FROM sessions WHERE last_used_at > ? ORDER BY last_used_at DESC
 	`
 	rows, err := s.db.Query(query, cutoff)
@@ -161,6 +173,7 @@ func (s *SessionStore) ListActive() ([]*Session, error) {
 		err := rows.Scan(
 			&session.ID,
 			&session.ABSTokenEnc,
+			&session.ABSPasswordEnc,
 			&session.ABSUserID,
 			&session.ABSUsername,
 			&createdAt,

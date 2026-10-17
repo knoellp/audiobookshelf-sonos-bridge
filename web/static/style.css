@@ -823,6 +823,21 @@ button {
     color: white;
 }
 
+.cache-badge.in_progress {
+    background-color: #3b82f6;
+    color: white;
+}
+
+.cache-badge.pending {
+    background-color: #eab308;
+    color: white;
+}
+
+.cache-badge.failed {
+    background-color: #ef4444;
+    color: white;
+}
+
 /* Loading Spinner */
 .spinner {
     width: 24px;

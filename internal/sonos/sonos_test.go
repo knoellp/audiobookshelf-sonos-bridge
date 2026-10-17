@@ -322,3 +322,35 @@ CACHE-CONTROL: max-age=1800
 		t.Errorf("extractLocation() = %q, want empty string", location)
 	}
 }
+
+func TestParseZoneGroupState_Ampersand(t *testing.T) {
+	// The device escapes the inner XML once ("Küche &amp; Bad") and the SOAP
+	// layer escapes it a second time ("&amp;amp;").
+	response := `<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
+<u:GetZoneGroupStateResponse xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1">
+<ZoneGroupState>&lt;ZoneGroupState&gt;&lt;ZoneGroups&gt;` +
+		`&lt;ZoneGroup Coordinator=&quot;RINCON_1&quot; ID=&quot;RINCON_1:1&quot;&gt;` +
+		`&lt;ZoneGroupMember UUID=&quot;RINCON_1&quot; Location=&quot;http://192.168.1.40:1400/xml/device_description.xml&quot; ZoneName=&quot;Küche &amp;amp; Bad&quot;/&gt;` +
+		`&lt;ZoneGroupMember UUID=&quot;RINCON_2&quot; Location=&quot;http://192.168.1.41:1400/xml/device_description.xml&quot; ZoneName=&quot;A &amp;lt; B&quot;/&gt;` +
+		`&lt;/ZoneGroup&gt;&lt;/ZoneGroups&gt;&lt;/ZoneGroupState&gt;</ZoneGroupState>
+</u:GetZoneGroupStateResponse></s:Body></s:Envelope>`
+
+	state, err := parseZoneGroupState(response)
+	if err != nil {
+		t.Fatalf("parseZoneGroupState: %v", err)
+	}
+	if len(state.ZoneGroups) != 1 || len(state.ZoneGroups[0].Members) != 2 {
+		t.Fatalf("unexpected topology: %+v", state)
+	}
+	members := state.ZoneGroups[0].Members
+	if members[0].ZoneName != "Küche & Bad" {
+		t.Errorf("ZoneName = %q, want %q", members[0].ZoneName, "Küche & Bad")
+	}
+	if members[1].ZoneName != "A < B" {
+		t.Errorf("ZoneName = %q, want %q", members[1].ZoneName, "A < B")
+	}
+	if members[0].IPAddress != "192.168.1.40" {
+		t.Errorf("IPAddress = %q", members[0].IPAddress)
+	}
+}

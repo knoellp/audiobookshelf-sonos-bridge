@@ -4,14 +4,17 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"audiobookshelf-sonos-bridge/internal/cache"
+	"audiobookshelf-sonos-bridge/internal/store"
 )
 
 // segmentPattern matches segment file names like "segment_000.m4a"
@@ -22,6 +25,35 @@ type Handler struct {
 	tokenGen   *TokenGenerator
 	cacheIndex *cache.Index
 	publicURL  string
+
+	allowedNetworks []net.IPNet
+}
+
+// SetAllowedNetworks restricts streaming to clients inside the given networks.
+// An empty list allows all clients.
+func (h *Handler) SetAllowedNetworks(nets []net.IPNet) {
+	h.allowedNetworks = nets
+}
+
+// isAllowedRemote reports whether the remote address is permitted.
+func (h *Handler) isAllowedRemote(remoteAddr string) bool {
+	if len(h.allowedNetworks) == 0 {
+		return true
+	}
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for i := range h.allowedNetworks {
+		if h.allowedNetworks[i].Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewHandler creates a new stream handler.
@@ -42,18 +74,18 @@ func (h *Handler) GetStreamURL(token string, format string) string {
 
 // GetSegmentStreamURL returns the full URL for streaming a specific segment.
 func (h *Handler) GetSegmentStreamURL(token string, segmentIndex int, format string) string {
-	ext := ".m4a"
-	switch format {
-	case "mp3":
-		ext = ".mp3"
-	case "flac":
-		ext = ".flac"
-	}
+	ext := store.SegmentExt(format)
 	return fmt.Sprintf("%s/stream/%s/segment_%03d%s", h.publicURL, token, segmentIndex, ext)
 }
 
 // HandleStream handles GET /stream/{token}/audio.* or /stream/{token}/segment_*.* requests.
 func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
+	if !h.isAllowedRemote(r.RemoteAddr) {
+		slog.Warn("stream request from disallowed network", "remote_addr", r.RemoteAddr)
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	// Extract token and filename from path
 	// Path format: /stream/{token}/audio.* or /stream/{token}/segment_000.*
 	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
@@ -71,6 +103,11 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("invalid stream token", "error", err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
+	}
+
+	// Large files are served to slow Sonos clients; disable the server write deadline.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		slog.Debug("could not clear write deadline", "error", err)
 	}
 
 	// Look up cache entry to get the correct format and path
@@ -165,8 +202,10 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("streaming cached file", "item_id", payload.ItemID, "format", entry.CacheFormat, "mime_type", mimeType, "size", fileSize)
 
 	// Handle Range requests (RFC 7233)
+	// Multi-range requests are not supported; per RFC 7233 the Range header may be
+	// ignored, so we serve the full content with 200.
 	rangeHeader := r.Header.Get("Range")
-	if rangeHeader != "" {
+	if rangeHeader != "" && !strings.Contains(rangeHeader, ",") {
 		h.handleRangeRequest(w, r, file, fileSize, rangeHeader, mimeType)
 		return
 	}
@@ -238,8 +277,13 @@ func (h *Handler) handleRangeRequest(w http.ResponseWriter, r *http.Request, fil
 		}
 	}
 
+	// Clamp end to the last byte (RFC 7233 section 2.1)
+	if end >= fileSize {
+		end = fileSize - 1
+	}
+
 	// Validate range
-	if start < 0 || start >= fileSize || end < start || end >= fileSize {
+	if start < 0 || start >= fileSize || end < start {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
 		http.Error(w, "range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
 		return

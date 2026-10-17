@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net"
@@ -35,18 +36,8 @@ type AVTransport struct {
 // NewAVTransport creates a new AVTransport client for a Sonos device.
 func NewAVTransport(deviceIP string) *AVTransport {
 	return &AVTransport{
-		deviceIP: deviceIP,
-		httpClient: &http.Client{
-			Timeout: DefaultTimeout,
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   5 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				ResponseHeaderTimeout: 5 * time.Second,
-				IdleConnTimeout:       90 * time.Second,
-			},
-		},
+		deviceIP:   deviceIP,
+		httpClient: soapClient,
 		maxRetries: MaxRetries,
 	}
 }
@@ -342,14 +333,9 @@ func escapeXML(s string) string {
 	return buf.String()
 }
 
-// unescapeXML unescapes XML entities.
+// unescapeXML unescapes XML/HTML entities in a single pass.
 func unescapeXML(s string) string {
-	s = strings.ReplaceAll(s, "&amp;", "&")
-	s = strings.ReplaceAll(s, "&lt;", "<")
-	s = strings.ReplaceAll(s, "&gt;", ">")
-	s = strings.ReplaceAll(s, "&quot;", "\"")
-	s = strings.ReplaceAll(s, "&apos;", "'")
-	return s
+	return html.UnescapeString(s)
 }
 
 // GenerateDIDLMetadata generates DIDL-Lite metadata for an audio item.

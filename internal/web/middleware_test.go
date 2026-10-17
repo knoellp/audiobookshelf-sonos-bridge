@@ -84,6 +84,9 @@ func TestSanitizePath(t *testing.T) {
 		{"/stream/secrettoken123/file", "/stream/[REDACTED]/file"},
 		{"/stream/abc/file", "/stream/[REDACTED]/file"},
 		{"/stream/", "/stream/"},
+		{"/stream/secrettoken123/audio.m4a", "/stream/[REDACTED]/audio.m4a"},
+		{"/stream/secrettoken123/segment_000.m4a", "/stream/[REDACTED]/segment_000.m4a"},
+		{"/stream/secrettoken123", "/stream/[REDACTED]"},
 		{"/api/items", "/api/items"},
 	}
 
@@ -153,5 +156,19 @@ func TestResponseWriter_OnlyFirstWriteHeader(t *testing.T) {
 
 	if wrapped.status != http.StatusCreated {
 		t.Errorf("expected status 201 (first call), got %d", wrapped.status)
+	}
+}
+
+func TestResponseWriterUnwrap(t *testing.T) {
+	rec := httptest.NewRecorder()
+	wrapped := wrapResponseWriter(rec)
+
+	var w http.ResponseWriter = wrapped
+	u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+	if !ok {
+		t.Fatal("responseWriter does not implement Unwrap")
+	}
+	if u.Unwrap() != http.ResponseWriter(rec) {
+		t.Error("Unwrap did not return the inner writer")
 	}
 }

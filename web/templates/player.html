@@ -44,15 +44,17 @@
 
 <script>
 // Poll for status updates
-let statusInterval;
+let statusInterval = null;
 
 function startStatusPolling() {
+    if (statusInterval) return;
     statusInterval = setInterval(updateStatus, 1000);
 }
 
 function stopStatusPolling() {
     if (statusInterval) {
         clearInterval(statusInterval);
+        statusInterval = null;
     }
 }
 
@@ -76,7 +78,9 @@ async function updateStatus() {
 
         // Only update UI if playback is for THIS item
         if (data.active && data.item_id === currentItemId) {
-            document.getElementById('position').textContent = data.position_str || formatSeconds(data.position_sec);
+            if (typeof seekAdjusting === 'undefined' || !seekAdjusting) {
+                document.getElementById('position').textContent = data.position_str || formatSeconds(data.position_sec);
+            }
             document.getElementById('duration').textContent = data.duration_str || formatSeconds(data.duration_sec);
 
             // Update progress slider (uses the new updateProgressUI function)
@@ -98,7 +102,9 @@ async function updateStatus() {
                 const shouldUpdateVolume = typeof lastUserInteraction === 'undefined' ||
                     typeof INTERACTION_PAUSE_MS === 'undefined' ||
                     (Date.now() - lastUserInteraction >= INTERACTION_PAUSE_MS);
-                if (shouldUpdateVolume) {
+                // In group mode the volume is managed by the group controls
+                const groupMode = typeof isGroupMode !== 'undefined' && isGroupMode;
+                if (shouldUpdateVolume && !groupMode) {
                     updateVolumeUI(data.volume, data.muted);
                 }
             }
@@ -232,7 +238,19 @@ async function startPlayback() {
             body: formData
         });
 
+        if (response.status === 202) {
+            // Cache is being prepared in the background - show progress and retry when ready
+            beginPreparing(itemId);
+            return;
+        }
+
+        if (response.status === 503) {
+            alert('Warteschlange voll, bitte später erneut versuchen.');
+            return;
+        }
+
         if (response.ok) {
+            hidePrepareStatus();
             playbackActive = true;
             updateStatus();
             // Refresh group info now that playback is active
@@ -247,6 +265,89 @@ async function startPlayback() {
     } catch (err) {
         console.error('Play failed:', err);
         alert('Wiedergabe fehlgeschlagen');
+    }
+}
+
+let prepareTimer = null;
+
+function hidePrepareStatus() {
+    if (prepareTimer) {
+        clearTimeout(prepareTimer);
+        prepareTimer = null;
+    }
+    const box = document.getElementById('prepare-status');
+    if (box) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+    }
+    const playBtn = document.getElementById('play-btn');
+    if (playBtn) playBtn.disabled = false;
+}
+
+function renderPrepareStatus(html) {
+    const box = document.getElementById('prepare-status');
+    box.innerHTML = html;
+    box.style.display = 'block';
+}
+
+function beginPreparing(itemId) {
+    const playBtn = document.getElementById('play-btn');
+    if (playBtn) playBtn.disabled = true;
+    pollPrepare(itemId, true);
+}
+
+async function retryPrepare(itemId) {
+    try {
+        const resp = await fetch('/cache/prepare/' + encodeURIComponent(itemId), { method: 'POST' });
+        if (resp.status === 503) {
+            alert('Warteschlange voll, bitte später erneut versuchen.');
+            return;
+        }
+    } catch (err) {
+        console.error('prepare failed:', err);
+    }
+    beginPreparing(itemId);
+}
+
+// Polls the cache status. If autoPlay is set, playback starts once the cache is ready.
+async function pollPrepare(itemId, autoPlay) {
+    if (prepareTimer) {
+        clearTimeout(prepareTimer);
+        prepareTimer = null;
+    }
+    try {
+        const response = await fetch('/cache/status/' + encodeURIComponent(itemId) + '?format=json');
+        const data = await response.json();
+        const playBtn = document.getElementById('play-btn');
+
+        if (data.status === 'ready') {
+            hidePrepareStatus();
+            if (autoPlay) {
+                await startPlayback();
+            }
+            return;
+        }
+        if (data.status === 'failed') {
+            if (playBtn) playBtn.disabled = false;
+            renderPrepareStatus('<div class="prepare-error"></div><button type="button" class="btn btn-secondary" onclick="retryPrepare(\'' + itemId + '\')">Erneut versuchen</button>');
+            document.querySelector('#prepare-status .prepare-error').textContent =
+                'Vorbereitung fehlgeschlagen: ' + (data.error || 'Unbekannter Fehler');
+            return;
+        }
+        if (data.status === 'in_progress') {
+            if (playBtn) playBtn.disabled = true;
+            const pct = data.percent || 0;
+            renderPrepareStatus(
+                '<div class="prepare-text"><span class="spinner prepare-spinner"></span>Wird vorbereitet \u2026 ' + pct + ' %</div>' +
+                '<div class="prepare-bar"><div class="prepare-bar-fill" style="width:' + pct + '%"></div></div>');
+            prepareTimer = setTimeout(function() { pollPrepare(itemId, true); }, 2000);
+            return;
+        }
+        // pending: nothing to show
+        hidePrepareStatus();
+    } catch (err) {
+        console.error('status check failed:', err);
+        prepareTimer = setTimeout(function() { pollPrepare(itemId, autoPlay); }, 4000);
     }
 }
 
@@ -273,6 +374,18 @@ async function stop() {
 document.addEventListener('DOMContentLoaded', function() {
     startStatusPolling();
     updateStatus();
+    // After a reload during preparation, show the progress again
+    const container = document.getElementById('player-container');
+    if (container) {
+        fetch('/cache/status/' + encodeURIComponent(container.dataset.itemId) + '?format=json')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.status === 'in_progress') {
+                    beginPreparing(container.dataset.itemId);
+                }
+            })
+            .catch(function() {});
+    }
 });
 
 // Stop polling when page is hidden, sync progress
@@ -291,6 +404,45 @@ window.addEventListener('pagehide', function() {
 </script>
 
 <style>
+.prepare-status {
+    margin: 1rem 0;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.prepare-text {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.prepare-spinner {
+    width: 16px;
+    height: 16px;
+    border-width: 2px;
+}
+
+.prepare-bar {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.prepare-bar-fill {
+    height: 100%;
+    background: var(--primary-color);
+    transition: width 0.5s;
+}
+
+.prepare-error {
+    color: #ef4444;
+    margin-bottom: 0.5rem;
+    word-break: break-word;
+}
+
 .player-page {
     max-width: 600px;
     margin: 0 auto;

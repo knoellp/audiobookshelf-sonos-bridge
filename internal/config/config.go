@@ -15,21 +15,22 @@ import (
 // Config holds all configuration values for the bridge service.
 type Config struct {
 	// Required
-	ABSURL          string // Audiobookshelf server URL
-	PublicURL       string // URL that Sonos can reach (for streaming)
-	SessionSecret   string // Secret for session encryption (min 32 chars)
+	ABSURL        string // Audiobookshelf server URL
+	PublicURL     string // URL that Sonos can reach (for streaming)
+	SessionSecret string // Secret for session encryption (min 32 chars)
 
 	// Optional with defaults
-	Port              string        // Server port (default: 8080)
-	CacheDir          string        // Cache directory (default: /cache)
-	ConfigDir         string        // Config directory (default: /config)
-	MediaDir          string        // Media directory (default: /media)
-	ABSMediaPrefix    string        // Path prefix ABS uses for media (default: /audiobooks)
-	PathMappings      []PathMapping // Additional path mappings (format: abs_prefix:local_path,...)
-	TranscodeWorkers  int           // Number of parallel transcoding workers (default: 2)
-	StreamTokenTTL    time.Duration // Streaming token validity (default: 24h)
-	AllowedNetworks   []string      // Allowed networks for streaming (default: all)
-	LogLevel          string        // Log level: debug, info, warn, error (default: info)
+	Port             string        // Server port (default: 8080)
+	CacheDir         string        // Cache directory (default: /cache)
+	ConfigDir        string        // Config directory (default: /config)
+	MediaDir         string        // Media directory (default: /media)
+	ABSMediaPrefix   string        // Path prefix ABS uses for media (default: /audiobooks)
+	PathMappings     []PathMapping // Additional path mappings (format: abs_prefix:local_path,...)
+	TranscodeWorkers int           // Number of parallel transcoding workers (default: 2)
+	StreamTokenTTL   time.Duration // Streaming token validity (default: 24h)
+	SessionMaxIdle   time.Duration // Delete sessions idle longer than this (0 = never)
+	AllowedNetworks  []string      // Allowed networks for streaming (default: all)
+	LogLevel         string        // Log level: debug, info, warn, error (default: info)
 }
 
 // Load reads configuration from environment variables.
@@ -110,6 +111,16 @@ func Load() (*Config, error) {
 		cfg.StreamTokenTTL = ttl
 	}
 
+	// Session max idle (optional; empty or 0 = sessions never expire)
+	if idleStr := os.Getenv("BRIDGE_SESSION_MAX_IDLE"); idleStr != "" {
+		idle, err := time.ParseDuration(idleStr)
+		if err != nil || idle < 0 {
+			errs = append(errs, fmt.Sprintf("BRIDGE_SESSION_MAX_IDLE must be a valid non-negative duration (got: %s)", idleStr))
+		} else {
+			cfg.SessionMaxIdle = idle
+		}
+	}
+
 	// Allowed networks (optional, comma-separated)
 	networksStr := os.Getenv("BRIDGE_ALLOWED_NETWORKS")
 	if networksStr != "" {
@@ -142,16 +153,26 @@ type PathMapping struct {
 func (c *Config) MapABSPathToLocal(absPath string) string {
 	// Check additional path mappings first
 	for _, mapping := range c.PathMappings {
-		if strings.HasPrefix(absPath, mapping.ABSPrefix) {
+		if hasPathPrefix(absPath, mapping.ABSPrefix) {
 			return mapping.LocalPath + strings.TrimPrefix(absPath, mapping.ABSPrefix)
 		}
 	}
 	// Fall back to default mapping
-	if strings.HasPrefix(absPath, c.ABSMediaPrefix) {
+	if hasPathPrefix(absPath, c.ABSMediaPrefix) {
 		return c.MediaDir + strings.TrimPrefix(absPath, c.ABSMediaPrefix)
 	}
 	// If no prefix match, assume the path is already correct
 	return absPath
+}
+
+// hasPathPrefix reports whether path equals prefix or lies below it
+// (respecting path boundaries, so "/audiobooks-kids" is not under "/audiobooks").
+func hasPathPrefix(path, prefix string) bool {
+	if prefix == "" {
+		return false
+	}
+	trimmed := strings.TrimRight(prefix, "/")
+	return path == trimmed || strings.HasPrefix(path, trimmed+"/")
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

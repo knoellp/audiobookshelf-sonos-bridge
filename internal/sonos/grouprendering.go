@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"regexp"
 	"strconv"
-	"time"
 )
 
 // GroupRenderingControl provides access to Sonos GroupRenderingControl service.
@@ -29,18 +27,8 @@ const (
 // NewGroupRenderingControl creates a new GroupRenderingControl client.
 func NewGroupRenderingControl(ip string) *GroupRenderingControl {
 	return &GroupRenderingControl{
-		ip: ip,
-		httpClient: &http.Client{
-			Timeout: DefaultTimeout,
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   5 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				ResponseHeaderTimeout: 5 * time.Second,
-				IdleConnTimeout:       90 * time.Second,
-			},
-		},
+		ip:         ip,
+		httpClient: soapClient,
 	}
 }
 

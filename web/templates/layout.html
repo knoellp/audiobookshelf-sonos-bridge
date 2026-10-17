@@ -12,8 +12,36 @@
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <link rel="apple-touch-icon" sizes="512x512" href="/static/audiobookshelf-bridge-WebApp-Icon.png">
     <title>{{if .Title}}{{.Title}} - {{end}}Audiobookshelf Sonos Bridge</title>
-    <link rel="stylesheet" href="/static/style.css?v=11">
+    <link rel="stylesheet" href="/static/style.css?v=12">
     <script src="/static/htmx.min.js" defer></script>
+    <script>
+    // Redirect to the login page whenever the server reports an expired session.
+    (function () {
+        var origFetch = window.fetch;
+        if (!origFetch) { return; }
+        window.fetch = function () {
+            return origFetch.apply(this, arguments).then(function (resp) {
+                if (resp && resp.status === 401 && window.location.pathname !== '/login') {
+                    window.location.href = '/login';
+                }
+                return resp;
+            });
+        };
+    })();
+    // Queue an item for background caching and refresh its badge.
+    function prepareItem(itemId, btn) {
+        if (btn) { btn.disabled = true; }
+        fetch('/cache/prepare/' + encodeURIComponent(itemId), { method: 'POST' })
+            .catch(function (err) { console.error('prepare failed:', err); })
+            .finally(function () {
+                if (btn) { btn.disabled = false; }
+                var el = document.getElementById('cache-status-' + itemId);
+                if (el && window.htmx) {
+                    htmx.ajax('GET', '/cache/status/' + itemId, { target: el, swap: 'innerHTML' });
+                }
+            });
+    }
+    </script>
 </head>
 <body>
     {{if .ShowHeader}}
@@ -79,7 +107,7 @@
                 <!-- User menu -->
                 <div class="user-menu">
                     <span class="username">{{.Username}}</span>
-                    <form action="/auth/logout" method="POST" class="logout-form">
+                    <form action="/auth/logout" method="POST" class="logout-form" onsubmit="return confirm('Wirklich abmelden? Du musst Dich dann neu anmelden.')">
                         <button type="submit" class="btn btn-icon logout-btn" title="Logout">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>

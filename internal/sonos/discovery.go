@@ -26,7 +26,8 @@ func NewDiscovery(deviceStore *store.DeviceStore) *Discovery {
 	return &Discovery{
 		deviceStore: deviceStore,
 		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
+			Timeout:   5 * time.Second,
+			Transport: sharedTransport,
 		},
 	}
 }
@@ -177,16 +178,25 @@ func (d *Discovery) getZoneInfo(ctx context.Context, devices []Device) (invisibl
 		return
 	}
 
-	// Use the first discovered device to query ZoneGroupTopology
-	// All Sonos devices share the same topology information
-	device := devices[0]
-	topology := NewZoneGroupTopology(device.IPAddress)
-
-	state, err := topology.GetZoneGroupState(ctx)
-	if err != nil {
-		slog.Warn("failed to get zone group state, skipping topology filtering",
-			"device", device.Name,
-			"error", err)
+	// All Sonos devices share the same topology information, so the first
+	// device that answers is sufficient.
+	var state *ZoneGroupState
+	var lastErr error
+	for _, device := range devices {
+		s, err := NewZoneGroupTopology(device.IPAddress).GetZoneGroupState(ctx)
+		if err != nil {
+			slog.Debug("zone group state query failed, trying next device",
+				"device", device.Name,
+				"error", err)
+			lastErr = err
+			continue
+		}
+		state = s
+		break
+	}
+	if state == nil {
+		slog.Warn("failed to get zone group state from any device, skipping topology filtering",
+			"error", lastErr)
 		return
 	}
 
@@ -373,17 +383,24 @@ func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
 		return nil
 	}
 
-	// Query ZoneGroupTopology from any reachable device
+	// Query ZoneGroupTopology from any device, reachable ones first. Devices
+	// flagged unreachable are still tried as a fallback so that they can
+	// recover (a single missed SSDP reply must not make them offline forever).
 	var zoneState *ZoneGroupState
-	for _, device := range devices {
-		if !device.IsReachable {
-			continue
+	for _, pass := range []bool{true, false} {
+		for _, device := range devices {
+			if device.IsReachable != pass {
+				continue
+			}
+			topology := NewZoneGroupTopology(device.IPAddress)
+			state, err := topology.GetZoneGroupState(ctx)
+			if err == nil {
+				zoneState = state
+				slog.Debug("RefreshGroupInfo: got zone state from device", "device_ip", device.IPAddress)
+				break
+			}
 		}
-		topology := NewZoneGroupTopology(device.IPAddress)
-		state, err := topology.GetZoneGroupState(ctx)
-		if err == nil {
-			zoneState = state
-			slog.Debug("RefreshGroupInfo: got zone state from device", "device_ip", device.IPAddress)
+		if zoneState != nil {
 			break
 		}
 	}
@@ -400,9 +417,21 @@ func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
 		"group_info_count", len(groupInfo),
 		"invisible_count", len(invisibleUUIDs))
 
+	// All players that appear in the topology are alive
+	inTopology := make(map[string]bool)
+	for _, g := range zoneState.ZoneGroups {
+		for _, m := range g.Members {
+			inTopology[NormalizeUUID(m.UUID)] = true
+		}
+	}
+
 	// Update each device in the store with current group info
 	for _, device := range devices {
 		normalizedUUID := NormalizeUUID(device.UUID)
+		becameReachable := !device.IsReachable && inTopology[normalizedUUID]
+		if becameReachable {
+			device.IsReachable = true
+		}
 
 		// Check if invisible (stereo pair slave)
 		isHidden := invisibleUUIDs[normalizedUUID]
@@ -427,7 +456,7 @@ func (d *Discovery) RefreshGroupInfo(ctx context.Context) error {
 		}
 
 		// Only update if something changed
-		if device.GroupSize != groupSize || device.IsHidden != isHidden {
+		if device.GroupSize != groupSize || device.IsHidden != isHidden || becameReachable {
 			slog.Info("RefreshGroupInfo: updating device",
 				"device_name", device.Name,
 				"old_group_size", device.GroupSize,

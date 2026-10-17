@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"audiobookshelf-sonos-bridge/internal/abs"
@@ -338,5 +341,196 @@ func TestSessionFromContext(t *testing.T) {
 	retrieved = SessionFromContext(emptyCtx)
 	if retrieved != nil {
 		t.Error("expected nil from empty context")
+	}
+}
+
+func TestRequireAuth_SetsFreshCookie(t *testing.T) {
+	authHandler, db, _, cleanup := setupAuthTest(t)
+	defer cleanup()
+	enc, _ := authHandler.EncryptToken("tok")
+	store.NewSessionStore(db).Create(&store.Session{ID: "sid", ABSTokenEnc: enc, ABSUserID: "u", ABSUsername: "n"})
+
+	h := authHandler.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	req := httptest.NewRequest("GET", "/x", nil)
+	req.AddCookie(&http.Cookie{Name: "bridge_session", Value: "sid"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var found *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "bridge_session" {
+			found = c
+		}
+	}
+	if found == nil || found.Value != "sid" || found.MaxAge != 400*24*60*60 {
+		t.Fatalf("expected refreshed 400d cookie, got %+v", found)
+	}
+}
+
+func TestRequireAuth_APIDetection(t *testing.T) {
+	authHandler, _, _, cleanup := setupAuthTest(t)
+	defer cleanup()
+	h := authHandler.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+
+	cases := []struct {
+		name   string
+		header map[string]string
+		want   int
+	}{
+		{"cors", map[string]string{"Sec-Fetch-Mode": "cors"}, http.StatusUnauthorized},
+		{"htmx", map[string]string{"HX-Request": "true"}, http.StatusUnauthorized},
+		{"accept json", map[string]string{"Accept": "application/json, text/plain"}, http.StatusUnauthorized},
+		{"browser", map[string]string{"Accept": "text/html", "Sec-Fetch-Mode": "navigate"}, http.StatusSeeOther},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest("GET", "/x", nil)
+		for k, v := range tc.header {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: expected %d, got %d", tc.name, tc.want, rec.Code)
+		}
+	}
+}
+
+func TestRequireAuth_MissingSessionWithCookieHint(t *testing.T) {
+	authHandler, _, _, cleanup := setupAuthTest(t)
+	defer cleanup()
+	h := authHandler.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	req := httptest.NewRequest("GET", "/x", nil)
+	req.AddCookie(&http.Cookie{Name: "bridge_session", Value: "gone"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if loc := rec.Header().Get("Location"); loc != "/login?error=session_expired" {
+		t.Errorf("unexpected redirect %q", loc)
+	}
+}
+
+func newReauthStub(t *testing.T, loginOK bool) (*httptest.Server, *int32) {
+	t.Helper()
+	var libCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			if !loginOK {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Write([]byte(`{"user":{"id":"u1","username":"x","token":"newtok"}}`))
+		case "/api/libraries":
+			atomic.AddInt32(&libCalls, 1)
+			if r.Header.Get("Authorization") != "Bearer newtok" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Write([]byte(`{"libraries":[]}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &libCalls
+}
+
+func setupReauthSession(t *testing.T, stubURL string) (*AuthHandler, *store.SessionStore, *store.Session) {
+	t.Helper()
+	db, err := store.New(t.TempDir() + "/r.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	ss := store.NewSessionStore(db)
+	h, _ := NewAuthHandler(abs.NewClient(stubURL), ss, "test-secret-key-at-least-32-chars!")
+	tokEnc, _ := h.EncryptToken("oldtok")
+	pwEnc, _ := h.EncryptToken("secret")
+	sess := &store.Session{ID: "sid", ABSTokenEnc: tokEnc, ABSPasswordEnc: pwEnc, ABSUserID: "u1", ABSUsername: "x"}
+	if err := ss.Create(sess); err != nil {
+		t.Fatal(err)
+	}
+	return h, ss, sess
+}
+
+func TestReauth_RefreshesToken(t *testing.T) {
+	srv, libCalls := newReauthStub(t, true)
+	h, ss, sess := setupReauthSession(t, srv.URL)
+
+	client, err := h.GetABSClientForSession(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetLibraries(context.Background()); err != nil {
+		t.Fatalf("expected success after re-login: %v", err)
+	}
+	if got := atomic.LoadInt32(libCalls); got != 2 {
+		t.Errorf("expected 2 library calls, got %d", got)
+	}
+	stored, _ := ss.Get("sid")
+	tok, err := h.DecryptToken(stored.ABSTokenEnc)
+	if err != nil || tok != "newtok" {
+		t.Errorf("stored token = %q, %v", tok, err)
+	}
+	pw, _ := h.DecryptToken(stored.ABSPasswordEnc)
+	if pw != "secret" {
+		t.Errorf("password must be preserved, got %q", pw)
+	}
+}
+
+func TestReauth_InvalidCredentialsDeletesSession(t *testing.T) {
+	srv, _ := newReauthStub(t, false)
+	h, ss, sess := setupReauthSession(t, srv.URL)
+
+	client, _ := h.GetABSClientForSession(sess)
+	_, err := client.GetLibraries(context.Background())
+	if !errors.Is(err, ErrSessionRevoked) {
+		t.Fatalf("expected ErrSessionRevoked, got %v", err)
+	}
+	if got, _ := ss.Get("sid"); got != nil {
+		t.Error("session should have been deleted")
+	}
+
+	// Next request gets the password_changed hint.
+	mw := h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	req := httptest.NewRequest("GET", "/x", nil)
+	req.AddCookie(&http.Cookie{Name: "bridge_session", Value: "sid"})
+	rec := httptest.NewRecorder()
+	mw.ServeHTTP(rec, req)
+	if loc := rec.Header().Get("Location"); loc != "/login?error=password_changed" {
+		t.Errorf("unexpected redirect %q", loc)
+	}
+}
+
+func TestReauth_ConcurrentLoginsOnce(t *testing.T) {
+	var logins int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" {
+			atomic.AddInt32(&logins, 1)
+			w.Write([]byte(`{"user":{"id":"u1","username":"x","token":"newtok"}}`))
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer newtok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"libraries":[]}`))
+	}))
+	defer srv.Close()
+	h, _, sess := setupReauthSession(t, srv.URL)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Each caller works on its own copy of the session, like separate requests.
+			cp := *sess
+			c, _ := h.GetABSClientForSession(&cp)
+			if _, err := c.GetLibraries(context.Background()); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := atomic.LoadInt32(&logins); got != 1 {
+		t.Errorf("expected exactly 1 login, got %d", got)
 	}
 }

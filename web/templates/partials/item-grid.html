@@ -35,6 +35,12 @@
                         <path d="M5 12h14M12 5l7 7-7 7"/>
                     </svg>
                 </div>
+                <button type="button" class="prepare-btn" title="Vorab laden" aria-label="Vorab laden"
+                        onclick="event.preventDefault(); event.stopPropagation(); prepareItem('{{.ID}}', this)">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                    </svg>
+                </button>
                 <div class="cache-status" id="cache-status-{{.ID}}"
                      hx-get="/cache/status/{{.ID}}"
                      hx-trigger="load"
@@ -62,7 +68,7 @@
 {{if .HasMore}}
 <div class="load-more" id="load-more-container">
     <button class="btn btn-secondary"
-            hx-get="/libraries/{{.LibraryID}}/items?offset={{.NextOffset}}&limit={{.Limit}}&append=1"
+            hx-get="/libraries/{{.LibraryID}}/items?offset={{.NextOffset}}&limit={{.Limit}}&append=1{{if .Filter}}&filter={{.Filter | urlquery}}{{end}}{{if .View}}&view={{.View | urlquery}}{{end}}"
             hx-target=".items-grid"
             hx-swap="beforeend"
             hx-include="[name='q'], [name='sort']">
@@ -145,6 +151,32 @@ a.item-card:hover {
 .cache-status.in_progress {
     background: rgba(59, 130, 246, 0.8);
 }
+
+.prepare-btn {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.prepare-btn:hover {
+    background: var(--primary-color);
+}
+
+/* Hide the button once the item is cached or being prepared */
+.item-overlay:has(.cache-badge.cached) .prepare-btn,
+.item-overlay:has(.cache-badge.in_progress) .prepare-btn {
+    display: none;
+}
 </style>
 {{end}}
 
@@ -184,6 +216,12 @@ a.item-card:hover {
                     <path d="M5 12h14M12 5l7 7-7 7"/>
                 </svg>
             </div>
+            <button type="button" class="prepare-btn" title="Vorab laden" aria-label="Vorab laden"
+                    onclick="event.preventDefault(); event.stopPropagation(); prepareItem('{{.ID}}', this)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                </svg>
+            </button>
             <div class="cache-status" id="cache-status-{{.ID}}"
                  hx-get="/cache/status/{{.ID}}"
                  hx-trigger="load"
@@ -201,7 +239,7 @@ a.item-card:hover {
 {{if .HasMore}}
 <div class="load-more" id="load-more-container" hx-swap-oob="outerHTML:#load-more-container">
     <button class="btn btn-secondary"
-            hx-get="/libraries/{{.LibraryID}}/items?offset={{.NextOffset}}&limit={{.Limit}}&append=1"
+            hx-get="/libraries/{{.LibraryID}}/items?offset={{.NextOffset}}&limit={{.Limit}}&append=1{{if .Filter}}&filter={{.Filter | urlquery}}{{end}}{{if .View}}&view={{.View | urlquery}}{{end}}"
             hx-target=".items-grid"
             hx-swap="beforeend"
             hx-include="[name='q'], [name='sort']">
@@ -215,11 +253,15 @@ a.item-card:hover {
 
 {{define "cache-status-badge"}}
 {{if eq .Status "ready"}}
-<span class="cache-badge cached" title="Cached"></span>
+<span class="cache-badge cached" title="Im Cache"></span>
 {{else if eq .Status "in_progress"}}
-<span class="cache-badge in_progress" title="Transcoding"></span>
+<span class="cache-badge in_progress" title="Wird vorbereitet"
+      hx-get="/cache/status/{{.ItemID}}" hx-trigger="load delay:5s"
+      hx-target="closest .cache-status" hx-swap="innerHTML"></span>
+{{else if eq .Status "failed"}}
+<span class="cache-badge failed" title="Fehlgeschlagen: {{.Error}}"></span>
 {{else if eq .Status "pending"}}
-<span class="cache-badge pending" title="Not cached"></span>
+<span class="cache-badge pending" title="Nicht im Cache"></span>
 {{else}}
 {{/* Empty status - show nothing */}}
 {{end}}

@@ -3,9 +3,11 @@ package abs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -124,7 +126,7 @@ func TestClient_GetLibraryItems(t *testing.T) {
 					ID: "item-1",
 					Media: BookMedia{
 						Metadata: BookMetadata{
-							Title: "Test Book",
+							Title:   "Test Book",
 							Authors: []Author{{Name: "Test Author"}},
 						},
 						Duration: 3600,
@@ -357,5 +359,62 @@ func TestLibraryItem_ToSimplified(t *testing.T) {
 	}
 	if simplified.CoverURL != "http://localhost:8080/api/items/item-123/cover" {
 		t.Errorf("unexpected cover URL: %s", simplified.CoverURL)
+	}
+}
+
+func TestClient_WithReauth_RetriesExactlyOnce(t *testing.T) {
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		if r.Header.Get("Authorization") != "Bearer fresh" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"libraries":[]}`))
+	}))
+	defer srv.Close()
+
+	var reauthCalls int32
+	c := NewClient(srv.URL).WithToken("stale").WithReauth(func(ctx context.Context) (string, error) {
+		atomic.AddInt32(&reauthCalls, 1)
+		return "fresh", nil
+	})
+	if _, err := c.GetLibraries(context.Background()); err != nil {
+		t.Fatalf("expected success after reauth, got %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 2 {
+		t.Errorf("expected 2 requests, got %d", got)
+	}
+	if got := atomic.LoadInt32(&reauthCalls); got != 1 {
+		t.Errorf("expected 1 reauth call, got %d", got)
+	}
+
+	// Reauth yields a token that is still rejected: no further retries.
+	atomic.StoreInt32(&requests, 0)
+	atomic.StoreInt32(&reauthCalls, 0)
+	c2 := NewClient(srv.URL).WithToken("stale").WithReauth(func(ctx context.Context) (string, error) {
+		atomic.AddInt32(&reauthCalls, 1)
+		return "still-bad", nil
+	})
+	if _, err := c2.GetLibraries(context.Background()); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("expected ErrUnauthorized, got %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 2 {
+		t.Errorf("expected 2 requests, got %d", got)
+	}
+	if got := atomic.LoadInt32(&reauthCalls); got != 1 {
+		t.Errorf("expected 1 reauth call, got %d", got)
+	}
+}
+
+func TestClient_WithReauth_FailureReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	boom := errors.New("boom")
+	c := NewClient(srv.URL).WithToken("x").WithReauth(func(ctx context.Context) (string, error) { return "", boom })
+	if err := c.UpdateProgress(context.Background(), "i", ProgressUpdate{}); !errors.Is(err, boom) {
+		t.Errorf("expected reauth error, got %v", err)
 	}
 }

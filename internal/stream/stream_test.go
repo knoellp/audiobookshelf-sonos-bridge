@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -288,5 +289,101 @@ func TestHandler_GetStreamURL(t *testing.T) {
 	expected = "http://192.168.1.100:8080/stream/my-token/audio.m4a"
 	if url != expected {
 		t.Errorf("mp4: expected %q, got %q", expected, url)
+	}
+}
+
+// newRangeTestHandler creates a handler with a 16 byte mp3 cache file and a valid token.
+func newRangeTestHandler(t *testing.T) (*Handler, string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	cacheIndex := setupTestCacheIndex(t, tmpDir)
+	createTestCacheEntry(t, cacheIndex, "item-123", "mp3")
+
+	itemDir := filepath.Join(tmpDir, "item-123")
+	if err := os.MkdirAll(itemDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(itemDir, "audio.mp3"), []byte("0123456789ABCDEF"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenGen := NewTokenGenerator("test-secret", time.Hour)
+	handler := NewHandler(tokenGen, cacheIndex, "http://localhost:8080")
+	token, err := tokenGen.Generate("item-123", "user-456", "session-789")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler, token
+}
+
+func TestHandler_HandleStream_RangeClamped(t *testing.T) {
+	handler, token := newRangeTestHandler(t)
+
+	req := httptest.NewRequest("GET", "/stream/"+token+"/audio.mp3", nil)
+	req.Header.Set("Range", "bytes=10-999")
+	w := httptest.NewRecorder()
+	handler.HandleStream(w, req)
+
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("expected 206, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Range"); got != "bytes 10-15/16" {
+		t.Errorf("Content-Range = %q, want 'bytes 10-15/16'", got)
+	}
+	if w.Body.String() != "ABCDEF" {
+		t.Errorf("body = %q, want ABCDEF", w.Body.String())
+	}
+}
+
+func TestHandler_HandleStream_RangeStartBeyondEnd(t *testing.T) {
+	handler, token := newRangeTestHandler(t)
+
+	req := httptest.NewRequest("GET", "/stream/"+token+"/audio.mp3", nil)
+	req.Header.Set("Range", "bytes=16-20")
+	w := httptest.NewRecorder()
+	handler.HandleStream(w, req)
+
+	if w.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Errorf("expected 416, got %d", w.Code)
+	}
+}
+
+func TestHandler_HandleStream_MultiRangeServesFull(t *testing.T) {
+	handler, token := newRangeTestHandler(t)
+
+	req := httptest.NewRequest("GET", "/stream/"+token+"/audio.mp3", nil)
+	req.Header.Set("Range", "bytes=0-1,5-6")
+	w := httptest.NewRecorder()
+	handler.HandleStream(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if w.Body.String() != "0123456789ABCDEF" {
+		t.Errorf("expected full body, got %q", w.Body.String())
+	}
+}
+
+func TestHandler_HandleStream_AllowedNetworks(t *testing.T) {
+	handler, token := newRangeTestHandler(t)
+	_, lan, _ := net.ParseCIDR("192.168.1.0/24")
+	handler.SetAllowedNetworks([]net.IPNet{*lan})
+
+	tests := []struct {
+		remote string
+		want   int
+	}{
+		{"192.168.1.50:4444", http.StatusOK},
+		{"10.0.0.5:4444", http.StatusForbidden},
+		{"garbage", http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest("GET", "/stream/"+token+"/audio.mp3", nil)
+		req.RemoteAddr = tt.remote
+		w := httptest.NewRecorder()
+		handler.HandleStream(w, req)
+		if w.Code != tt.want {
+			t.Errorf("remote %q: got %d, want %d", tt.remote, w.Code, tt.want)
+		}
 	}
 }

@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // ZoneGroupTopology provides access to Sonos zone group topology information.
@@ -22,18 +21,8 @@ type ZoneGroupTopology struct {
 // NewZoneGroupTopology creates a new ZoneGroupTopology client for a Sonos device.
 func NewZoneGroupTopology(deviceIP string) *ZoneGroupTopology {
 	return &ZoneGroupTopology{
-		deviceIP: deviceIP,
-		httpClient: &http.Client{
-			Timeout: DefaultTimeout,
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   5 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
-				ResponseHeaderTimeout: 5 * time.Second,
-				IdleConnTimeout:       90 * time.Second,
-			},
-		},
+		deviceIP:   deviceIP,
+		httpClient: soapClient,
 	}
 }
 
@@ -100,8 +89,9 @@ func parseZoneGroupState(response string) (*ZoneGroupState, error) {
 		return nil, fmt.Errorf("ZoneGroupState not found in response")
 	}
 
-	// The content is HTML-escaped, need to unescape it
-	unescaped := unescapeXML(zoneGroupStateContent)
+	// extractString has already unescaped the SOAP layer. Unescaping again
+	// would corrupt zone names that contain escaped entities themselves.
+	unescaped := zoneGroupStateContent
 
 	// Parse the ZoneGroupState XML (structure: <ZoneGroupState><ZoneGroups>...</ZoneGroups></ZoneGroupState>)
 	var wrapper ZoneGroupStateWrapperXML

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -36,6 +37,7 @@ type PlayerHandler struct {
 	playbackStore  *store.PlaybackStore
 	pathMapper     PathMapper
 	progressSyncer *ProgressSyncer
+	segments       *SegmentTransitioner
 }
 
 // NewPlayerHandler creates a new player handler.
@@ -50,6 +52,7 @@ func NewPlayerHandler(
 	playbackStore *store.PlaybackStore,
 	pathMapper PathMapper,
 	progressSyncer *ProgressSyncer,
+	segments *SegmentTransitioner,
 ) *PlayerHandler {
 	return &PlayerHandler{
 		authHandler:    authHandler,
@@ -62,6 +65,7 @@ func NewPlayerHandler(
 		playbackStore:  playbackStore,
 		pathMapper:     pathMapper,
 		progressSyncer: progressSyncer,
+		segments:       segments,
 	}
 }
 
@@ -69,22 +73,64 @@ func NewPlayerHandler(
 // If the device is standalone or an error occurs, returns the original device IP.
 // This ensures that all AVTransport commands go to the coordinator, which controls the entire group.
 func (h *PlayerHandler) getCoordinatorIP(ctx context.Context, deviceIP string) string {
-	zgt := sonos.NewZoneGroupTopology(deviceIP)
-	info, err := zgt.GetCoordinatorInfo(ctx)
-	if err != nil {
-		slog.Debug("could not get coordinator info, using device IP",
-			"device_ip", deviceIP,
-			"error", err)
-		return deviceIP
+	return coordinatorIP(ctx, deviceIP)
+}
+
+// resolveSourcePaths returns the local source file paths of an item in playback order.
+func (h *PlayerHandler) resolveSourcePaths(item *abs.LibraryItem) []string {
+	audioFiles := make([]abs.AudioFile, len(item.Media.AudioFiles))
+	copy(audioFiles, item.Media.AudioFiles)
+	sort.Slice(audioFiles, func(i, j int) bool {
+		return audioFiles[i].Index < audioFiles[j].Index
+	})
+	sourcePaths := make([]string, 0, len(audioFiles))
+	for _, af := range audioFiles {
+		sourcePaths = append(sourcePaths, h.pathMapper(af.Metadata.Path))
 	}
-	if info.CoordinatorIP != "" && info.CoordinatorIP != deviceIP {
-		slog.Debug("routing to group coordinator",
-			"device_ip", deviceIP,
-			"coordinator_ip", info.CoordinatorIP,
-			"group_size", info.GroupSize)
-		return info.CoordinatorIP
+	return sourcePaths
+}
+
+// ensurePreparing makes sure a cache entry exists and a priority job is queued
+// unless one is already active. Returns an error if the entry cannot be created.
+func (h *PlayerHandler) ensurePreparing(itemID string, sourcePaths []string) error {
+	if h.cacheWorker.IsActive(itemID) {
+		return nil
 	}
-	return deviceIP
+	entry, _ := h.cacheIndex.GetEntry(itemID)
+	if entry == nil {
+		if err := h.cacheIndex.CreateEntry(itemID, sourcePaths[0], 0, time.Now()); err != nil {
+			slog.Error("failed to create cache entry", "item_id", itemID, "error", err)
+			return err
+		}
+	} else if entry.Status == store.CacheStatusReady || entry.Status == store.CacheStatusInProgress {
+		// "ready" without files or "in_progress" without an active job is
+		// stale (e.g. after a restart). Reset it so clients do not see a
+		// misleading status while the item is re-queued.
+		if err := h.cacheIndex.MarkPending(itemID); err != nil {
+			slog.Warn("failed to reset stale cache entry", "item_id", itemID, "error", err)
+		}
+	}
+	if !h.cacheWorker.EnqueuePriority(cache.Job{ItemID: itemID, SourcePaths: sourcePaths}) &&
+		!h.cacheWorker.IsActive(itemID) {
+		slog.Warn("cache queue full", "item_id", itemID)
+		return errQueueFull
+	}
+	return nil
+}
+
+// errQueueFull is returned by ensurePreparing when the job queue is full.
+var errQueueFull = errors.New("cache queue full")
+
+func writeQueueFullResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	json.NewEncoder(w).Encode(map[string]string{"status": "queue_full"})
+}
+
+func writePreparingResponse(w http.ResponseWriter, itemID string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]string{"status": "preparing", "item_id": itemID})
 }
 
 // HandlePlay handles POST /play requests to start playback on Sonos.
@@ -158,18 +204,7 @@ func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sort audio files by index to ensure correct order
-	audioFiles := make([]abs.AudioFile, len(item.Media.AudioFiles))
-	copy(audioFiles, item.Media.AudioFiles)
-	sort.Slice(audioFiles, func(i, j int) bool {
-		return audioFiles[i].Index < audioFiles[j].Index
-	})
-	sourcePaths := make([]string, 0, len(audioFiles))
-	for _, af := range audioFiles {
-		absPath := af.Metadata.Path
-		localPath := h.pathMapper(absPath)
-		sourcePaths = append(sourcePaths, localPath)
-	}
+	sourcePaths := h.resolveSourcePaths(item)
 	slog.Debug("audio files mapped", "item_id", itemID, "file_count", len(sourcePaths))
 
 	// Check cache status
@@ -183,24 +218,18 @@ func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("cache status checked", "item_id", itemID, "cached", cached)
 
 	if !cached {
-		// Start on-demand transcoding
-		entry, _ := h.cacheIndex.GetEntry(itemID)
-
-		if entry == nil {
-			// Create new entry (use first path for backwards compatibility)
-			if err := h.cacheIndex.CreateEntry(itemID, sourcePaths[0], 0, time.Now()); err != nil {
-				slog.Error("failed to create cache entry", "item_id", itemID, "error", err)
-				http.Error(w, "cache error", http.StatusInternalServerError)
+		// Preparation runs in the background worker; the client polls the
+		// cache status and calls /play again once the cache is ready.
+		if err := h.ensurePreparing(itemID, sourcePaths); err != nil {
+			if errors.Is(err, errQueueFull) {
+				writeQueueFullResponse(w)
 				return
 			}
-		}
-
-		// Do synchronous transcoding for immediate playback (with all files)
-		if err := h.cacheWorker.TranscodeSyncMultiple(ctx, itemID, sourcePaths); err != nil {
-			slog.Error("transcoding failed", "item_id", itemID, "error", err)
-			http.Error(w, "transcoding failed", http.StatusInternalServerError)
+			http.Error(w, "cache error", http.StatusInternalServerError)
 			return
 		}
+		writePreparingResponse(w, itemID)
+		return
 	}
 
 	// Get cache entry to determine the correct file format
@@ -221,7 +250,12 @@ func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get saved progress from ABS (need this early for segment calculation)
-	progress, _ := absClient.GetProgress(ctx, itemID)
+	progress, err := absClient.GetProgress(ctx, itemID)
+	if err != nil && !errors.Is(err, abs.ErrNotFound) {
+		slog.Error("failed to get progress from ABS", "item_id", itemID, "error", err)
+		http.Error(w, "Audiobookshelf nicht erreichbar", http.StatusBadGateway)
+		return
+	}
 	startPositionSec := 0
 	if progress != nil && progress.CurrentTime > 0 {
 		startPositionSec = int(progress.CurrentTime)
@@ -239,13 +273,7 @@ func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 		segmentDurationSec = cacheEntry.SegmentDurationSec
 
 		// Build segment URL
-		ext := ".m4a"
-		switch cacheEntry.CacheFormat {
-		case "mp3":
-			ext = ".mp3"
-		case "flac":
-			ext = ".flac"
-		}
+		ext := store.SegmentExt(cacheEntry.CacheFormat)
 		streamURL = fmt.Sprintf("%s/stream/%s/segment_%03d%s", h.publicURL, token, currentSegment, ext)
 		slog.Debug("segmented stream URL generated",
 			"url", streamURL,
@@ -325,6 +353,19 @@ func (h *PlayerHandler) HandlePlay(w http.ResponseWriter, r *http.Request) {
 
 	// Check if there's an existing session with a different item - clear its sleep timer
 	existingSession, _ := h.playbackStore.GetBySessionID(session.ID)
+	if existingSession != nil {
+		// Only one playback row per web session: flush the old book's
+		// progress (if it is a different book) and remove the row, so the
+		// background syncer can never write book B's position into book A.
+		if existingSession.ItemID != itemID && h.progressSyncer != nil {
+			h.progressSyncer.SyncNow(r.Context(), session.ID)
+		}
+		if err := h.playbackStore.DeleteBySessionID(session.ID); err != nil {
+			slog.Warn("failed to delete previous playback session", "error", err)
+		} else if h.progressSyncer != nil {
+			h.progressSyncer.Forget(existingSession.ID)
+		}
+	}
 	if existingSession != nil && existingSession.ItemID != itemID {
 		// User is starting a different book - clear any active sleep timer
 		if existingSession.SleepAt != nil {
@@ -425,12 +466,7 @@ func (h *PlayerHandler) HandlePause(w http.ResponseWriter, r *http.Request) {
 		localPos := int(sonos.ParseDuration(posInfo.RelTime).Seconds())
 
 		// Calculate global position for segmented playback
-		var globalPos int
-		if playback.SegmentDurationSec > 0 {
-			globalPos = store.SegmentToGlobal(playback.CurrentSegment, localPos, playback.SegmentDurationSec)
-		} else {
-			globalPos = localPos
-		}
+		globalPos := globalPosition(playback, localPos)
 
 		playback.PositionSec = globalPos
 		h.playbackStore.UpdatePosition(playback.ID, globalPos)
@@ -571,13 +607,7 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 				localSeekPos = 0
 			}
 			// Build segment URL
-			ext := ".m4a"
-			switch cacheEntry.CacheFormat {
-			case "mp3":
-				ext = ".mp3"
-			case "flac":
-				ext = ".flac"
-			}
+			ext := store.SegmentExt(cacheEntry.CacheFormat)
 			streamURL = fmt.Sprintf("%s/stream/%s/segment_%03d%s", h.publicURL, newToken, currentSegment, ext)
 			slog.Debug("player switch using segmented stream",
 				"segment", currentSegment,
@@ -666,11 +696,13 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch latest progress from ABS (single source of truth for position)
 	var absPositionSec int
+	var absLastUpdateMs int64
 	absClient, absErr := h.authHandler.GetABSClientForSession(session)
 	if absErr == nil {
 		progress, err := absClient.GetProgress(ctx, playback.ItemID)
 		if err == nil && progress != nil {
 			absPositionSec = int(progress.CurrentTime)
+			absLastUpdateMs = progress.LastUpdate
 			slog.Debug("fetched ABS progress on resume",
 				"item_id", playback.ItemID,
 				"abs_position_sec", absPositionSec,
@@ -686,7 +718,7 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 		if diff < 0 {
 			diff = -diff
 		}
-		if diff > 5 {
+		if diff > 5 && preferABSPosition(playback, absLastUpdateMs) {
 			targetPosition = absPositionSec
 			slog.Info("position changed in ABS, seeking on resume",
 				"item_id", playback.ItemID,
@@ -695,6 +727,10 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 				"diff_sec", diff,
 			)
 			h.playbackStore.UpdatePosition(playback.ID, absPositionSec)
+			// A resume may legitimately move the position backwards
+			if h.progressSyncer != nil {
+				h.progressSyncer.AllowBackwards(playback.ID)
+			}
 		}
 	}
 
@@ -717,23 +753,25 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 	// Build stream URL (segmented or single file)
 	var streamURL string
 	var localSeekPos int
+	resumeSegment := playback.CurrentSegment
 	if cacheEntry.IsSegmented() {
 		segmentDuration := cacheEntry.SegmentDurationSec
 		if segmentDuration <= 0 {
 			segmentDuration = 7200
 		}
-		currentSegment := playback.CurrentSegment
-		localSeekPos = targetPosition - (currentSegment * segmentDuration)
+		// The target position (possibly from ABS) may lie in a different
+		// segment than the stored one, so recompute segment and local offset.
+		currentSegment, local := store.GlobalToSegment(targetPosition, segmentDuration)
+		if cacheEntry.SegmentCount > 0 && currentSegment >= cacheEntry.SegmentCount {
+			currentSegment = cacheEntry.SegmentCount - 1
+			local = targetPosition - currentSegment*segmentDuration
+		}
+		localSeekPos = local
 		if localSeekPos < 0 {
 			localSeekPos = 0
 		}
-		ext := ".m4a"
-		switch cacheEntry.CacheFormat {
-		case "mp3":
-			ext = ".mp3"
-		case "flac":
-			ext = ".flac"
-		}
+		resumeSegment = currentSegment
+		ext := store.SegmentExt(cacheEntry.CacheFormat)
 		streamURL = fmt.Sprintf("%s/stream/%s/segment_%03d%s", h.publicURL, newToken, currentSegment, ext)
 		slog.Debug("resume using segmented stream",
 			"segment", currentSegment,
@@ -784,9 +822,14 @@ func (h *PlayerHandler) HandleResume(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update stream token and playing state
+	// Update stream token, position/segment and playing state
 	if err := h.playbackStore.UpdateStreamToken(playback.ID, newToken); err != nil {
 		slog.Warn("failed to update stream token on resume", "error", err)
+	}
+	if cacheEntry.IsSegmented() {
+		if err := h.playbackStore.UpdatePositionAndSegment(playback.ID, targetPosition, resumeSegment); err != nil {
+			slog.Warn("failed to update position and segment on resume", "error", err)
+		}
 	}
 	h.playbackStore.UpdatePlaying(playback.ID, true)
 
@@ -820,6 +863,11 @@ func (h *PlayerHandler) HandleSeek(w http.ResponseWriter, r *http.Request) {
 	if err != nil || playback == nil {
 		http.Error(w, "no active playback", http.StatusNotFound)
 		return
+	}
+
+	// An explicit seek may legitimately move the position backwards
+	if h.progressSyncer != nil {
+		h.progressSyncer.AllowBackwards(playback.ID)
 	}
 
 	// Get Sonos device
@@ -865,7 +913,7 @@ func (h *PlayerHandler) HandleSeek(w http.ResponseWriter, r *http.Request) {
 
 		// Convert to global position and apply offset
 		if playback.SegmentDurationSec > 0 {
-			currentGlobalPos := store.SegmentToGlobal(playback.CurrentSegment, localPos, playback.SegmentDurationSec)
+			currentGlobalPos := globalPosition(playback, localPos)
 			targetGlobalPositionSec = currentGlobalPos + offsetSec
 		} else {
 			targetGlobalPositionSec = localPos + offsetSec
@@ -880,6 +928,14 @@ func (h *PlayerHandler) HandleSeek(w http.ResponseWriter, r *http.Request) {
 	} else {
 		http.Error(w, "offset or position required", http.StatusBadRequest)
 		return
+	}
+
+	// Clamp the final global position (applies to absolute and relative seeks)
+	if targetGlobalPositionSec < 0 {
+		targetGlobalPositionSec = 0
+	}
+	if playback.DurationSec > 0 && targetGlobalPositionSec > playback.DurationSec {
+		targetGlobalPositionSec = playback.DurationSec
 	}
 
 	// Handle segmented playback - check if we need to switch segments
@@ -910,14 +966,17 @@ func (h *PlayerHandler) HandleSeek(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Build URL for target segment
-			ext := ".m4a"
-			switch cacheEntry.CacheFormat {
-			case "mp3":
-				ext = ".mp3"
-			case "flac":
-				ext = ".flac"
+			ext := store.SegmentExt(cacheEntry.CacheFormat)
+			segToken := playback.StreamToken
+			if newToken, genErr := h.tokenGen.Generate(playback.ItemID, session.UserID, session.ID); genErr != nil {
+				slog.Warn("failed to refresh stream token for seek, using stored token", "error", genErr)
+			} else {
+				segToken = newToken
+				if err := h.playbackStore.UpdateStreamToken(playback.ID, newToken); err != nil {
+					slog.Warn("failed to persist refreshed stream token", "error", err)
+				}
 			}
-			segmentURL := fmt.Sprintf("%s/stream/%s/segment_%03d%s", h.publicURL, playback.StreamToken, targetSegment, ext)
+			segmentURL := fmt.Sprintf("%s/stream/%s/segment_%03d%s", h.publicURL, segToken, targetSegment, ext)
 
 			// Get item for metadata
 			absClient, _ := h.authHandler.GetABSClientForSession(session)
@@ -1010,7 +1069,9 @@ func (h *PlayerHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	// Get current transport state from Sonos
 	transportInfo, err := avt.GetTransportInfo(r.Context())
 	isPlaying := playback.IsPlaying // fallback to stored value
+	transportState := ""
 	if err == nil {
+		transportState = string(transportInfo.CurrentTransportState)
 		isPlaying = transportInfo.CurrentTransportState == sonos.TransportStatePlaying
 		// Update stored state if it changed
 		if isPlaying != playback.IsPlaying {
@@ -1044,25 +1105,46 @@ func (h *PlayerHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sonos may be playing something else (radio, another app). Never treat
+	// that as audiobook progress.
+	if !isBridgeStream(posInfo.TrackURI, h.publicURL) {
+		slog.Info("sonos is not playing a bridge stream, marking playback stopped",
+			"item_id", playback.ItemID, "track_uri", posInfo.TrackURI)
+		if playback.IsPlaying {
+			h.playbackStore.UpdatePlaying(playback.ID, false)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"active":       true,
+			"item_id":      playback.ItemID,
+			"is_playing":   false,
+			"position_sec": playback.PositionSec,
+			"duration_sec": playback.DurationSec,
+			"position_str": formatDuration(time.Duration(playback.PositionSec) * time.Second),
+			"duration_str": formatDurationSec(playback.DurationSec),
+			"title":        playback.ItemTitle,
+			"author":       playback.ItemAuthor,
+			"cover_url":    "/cover/" + playback.ItemID,
+		})
+		return
+	}
+
 	// Parse position from string (this is the LOCAL position within current segment)
 	relTime := sonos.ParseDuration(posInfo.RelTime)
 	trackDuration := sonos.ParseDuration(posInfo.TrackDuration)
 	localPositionSec := int(relTime.Seconds())
 
 	// Calculate global position (across all segments)
-	var globalPositionSec int
+	globalPositionSec := globalPosition(playback, localPositionSec)
 	if playback.SegmentDurationSec > 0 {
-		// Segmented playback: global = segment * segment_duration + local
-		globalPositionSec = store.SegmentToGlobal(playback.CurrentSegment, localPositionSec, playback.SegmentDurationSec)
 
 		// Check if we're near segment end and need to switch to next segment
 		segmentEndThreshold := playback.SegmentDurationSec - 5 // 5 seconds before end
-		if isPlaying && localPositionSec >= segmentEndThreshold {
-			h.handleSegmentTransition(r.Context(), playback, device)
+		if isPlaying && localPositionSec >= segmentEndThreshold && h.segments != nil {
+			if _, err := h.segments.Transition(r.Context(), playback, device); err != nil {
+				slog.Warn("segment transition failed", "item_id", playback.ItemID, "error", err)
+			}
 		}
-	} else {
-		// Non-segmented playback: global = local
-		globalPositionSec = localPositionSec
 	}
 
 	// Use stored total duration (always correct for global duration)
@@ -1081,7 +1163,9 @@ func (h *PlayerHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Update stored global position
-	h.playbackStore.UpdatePosition(playback.ID, globalPositionSec)
+	if shouldStorePosition(globalPositionSec, playback.PositionSec, transportState) {
+		h.playbackStore.UpdatePosition(playback.ID, globalPositionSec)
+	}
 
 	// Get volume level
 	volume, _ := avt.GetVolume(r.Context())
@@ -1129,80 +1213,6 @@ func (h *PlayerHandler) HandleSyncProgress(w http.ResponseWriter, r *http.Reques
 		h.progressSyncer.SyncNow(r.Context(), session.ID)
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleSegmentTransition handles the transition to the next segment.
-func (h *PlayerHandler) handleSegmentTransition(ctx context.Context, playback *store.PlaybackSession, device *store.SonosDevice) {
-	// Get cache entry to check segment count
-	cacheEntry, err := h.cacheIndex.GetEntry(playback.ItemID)
-	if err != nil || cacheEntry == nil {
-		slog.Warn("failed to get cache entry for segment transition", "item_id", playback.ItemID, "error", err)
-		return
-	}
-
-	nextSegment := playback.CurrentSegment + 1
-	if nextSegment >= cacheEntry.SegmentCount {
-		slog.Debug("reached last segment, no transition needed",
-			"current_segment", playback.CurrentSegment,
-			"segment_count", cacheEntry.SegmentCount)
-		return
-	}
-
-	slog.Info("transitioning to next segment",
-		"item_id", playback.ItemID,
-		"from_segment", playback.CurrentSegment,
-		"to_segment", nextSegment,
-		"segment_count", cacheEntry.SegmentCount)
-
-	// Build URL for next segment
-	ext := ".m4a"
-	switch cacheEntry.CacheFormat {
-	case "mp3":
-		ext = ".mp3"
-	case "flac":
-		ext = ".flac"
-	}
-	nextStreamURL := fmt.Sprintf("%s/stream/%s/segment_%03d%s", h.publicURL, playback.StreamToken, nextSegment, ext)
-
-	// Get item for metadata
-	session := &store.Session{ID: playback.SessionID}
-	absClient, err := h.authHandler.GetABSClientForSession(session)
-	if err != nil {
-		slog.Warn("failed to get ABS client for segment transition", "error", err)
-		// Continue without metadata
-	}
-
-	var metadata string
-	if absClient != nil {
-		item, err := absClient.GetItem(ctx, playback.ItemID)
-		if err == nil && item != nil {
-			mimeType := cache.GetContentType(cacheEntry.CacheFormat)
-			metadata = buildDIDLMetadata(item, nextStreamURL, mimeType)
-		}
-	}
-
-	// Get coordinator IP for group support
-	targetIP := h.getCoordinatorIP(ctx, device.IPAddress)
-
-	// Set next segment on Sonos (via coordinator)
-	avt := sonos.NewAVTransport(targetIP)
-	if err := avt.SetAVTransportURI(ctx, nextStreamURL, metadata); err != nil {
-		slog.Error("failed to set next segment URI", "error", err)
-		return
-	}
-
-	// Start playback of next segment
-	if err := avt.Play(ctx); err != nil {
-		slog.Error("failed to start next segment", "error", err)
-		return
-	}
-
-	// Update playback session with new segment
-	h.playbackStore.UpdateCurrentSegment(playback.ID, nextSegment)
-
-	slog.Info("segment transition complete",
-		"item_id", playback.ItemID,
-		"new_segment", nextSegment)
 }
 
 // HandlePlayer handles GET /player/{item_id} requests.
@@ -1280,6 +1290,7 @@ func (h *PlayerHandler) renderPlayerPage(w http.ResponseWriter, name string, dat
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	funcMap := template.FuncMap{
+		"formatHMS": formatDurationSec,
 		"formatDuration": func(seconds int) string {
 			hours := seconds / 3600
 			minutes := (seconds % 3600) / 60
@@ -1339,8 +1350,37 @@ func (h *PlayerHandler) renderPlayerPage(w http.ResponseWriter, name string, dat
 	}
 }
 
+// preferABSPosition reports whether the Audiobookshelf position should win
+// over the locally tracked one on resume. While the bridge itself is playing
+// (or has newer position data than ABS) ABS only lags behind, so the local
+// position is authoritative. absLastUpdateMs is ABS' lastUpdate (epoch ms).
+func preferABSPosition(playback *store.PlaybackSession, absLastUpdateMs int64) bool {
+	if playback.IsPlaying {
+		return false
+	}
+	return absLastUpdateMs > playback.LastPositionUpdate.UnixMilli()
+}
+
+// effectiveCacheStatus derives the status shown to clients. A queued job that
+// has not started yet counts as in_progress (so clients keep polling), and a
+// "ready" entry whose files are missing is pending (or in_progress if a job
+// is already re-creating it).
+func effectiveCacheStatus(status store.CacheStatus, cached, active bool) store.CacheStatus {
+	switch {
+	case status == store.CacheStatusPending && active:
+		return store.CacheStatusInProgress
+	case status == store.CacheStatusReady && !cached:
+		if active {
+			return store.CacheStatusInProgress
+		}
+		return store.CacheStatusPending
+	}
+	return status
+}
+
 // HandleCacheStatus handles GET /cache/status/{item_id} requests.
-// Returns HTML for htmx swap into the cache-status div.
+// Returns JSON for ?format=json or Accept: application/json, otherwise HTML
+// for htmx swap into the cache-status div.
 func (h *PlayerHandler) HandleCacheStatus(w http.ResponseWriter, r *http.Request) {
 	// Extract item ID from path (Go 1.22+ path parameter)
 	itemID := r.PathValue("id")
@@ -1359,15 +1399,115 @@ func (h *PlayerHandler) HandleCacheStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Compute the effective status once for JSON and HTML so that clients
+	// never see "ready" for an entry whose files are missing.
+	active := h.cacheWorker != nil && h.cacheWorker.IsActive(itemID)
+	cached := true
+	if status == store.CacheStatusReady {
+		cached, _ = h.cacheIndex.IsCached(itemID)
+	}
+	effective := effectiveCacheStatus(status, cached, active)
+
+	var errorText string
+	var entry *store.CacheEntry
+	if status == store.CacheStatusFailed {
+		entry, _ = h.cacheIndex.GetEntry(itemID)
+		if entry != nil {
+			errorText = entry.ErrorText
+		}
+	}
+
+	if r.URL.Query().Get("format") == "json" || strings.Contains(r.Header.Get("Accept"), "application/json") {
+		resp := map[string]interface{}{
+			"status":      string(effective),
+			"percent":     0,
+			"phase":       "",
+			"error":       errorText,
+			"elapsed_sec": 0,
+		}
+		if effective == store.CacheStatusReady {
+			resp["percent"] = 100
+		}
+		if h.cacheWorker != nil {
+			if p, ok := h.cacheWorker.Progress(itemID); ok {
+				resp["phase"] = p.Phase
+				resp["elapsed_sec"] = int(time.Since(p.StartedAt).Seconds())
+				if effective != store.CacheStatusReady {
+					resp["percent"] = p.Percent
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
 	// Render HTML template for htmx
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := map[string]interface{}{
-		"Status": string(status),
+		"Status": string(effective),
+		"ItemID": itemID,
+		"Error":  errorText,
 	}
 	if err := h.templates.ExecuteTemplate(w, "cache-status-badge", data); err != nil {
 		slog.Error("template execute error", "error", err)
 		http.Error(w, "Template error", http.StatusInternalServerError)
 	}
+}
+
+// HandlePrepare handles POST /cache/prepare/{id} requests. It queues the item
+// for background caching (also used as "retry" after a failure).
+func (h *PlayerHandler) HandlePrepare(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r.Context())
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	itemID := r.PathValue("id")
+	if itemID == "" {
+		http.Error(w, "item_id required", http.StatusBadRequest)
+		return
+	}
+
+	cached, err := h.cacheIndex.IsCached(itemID)
+	if err != nil {
+		http.Error(w, "cache error", http.StatusInternalServerError)
+		return
+	}
+	if cached {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ready", "item_id": itemID})
+		return
+	}
+
+	absClient, err := h.authHandler.GetABSClientForSession(session)
+	if err != nil {
+		slog.Error("failed to get ABS client for session", "error", err)
+		http.Error(w, "session error", http.StatusInternalServerError)
+		return
+	}
+	item, err := absClient.GetItem(r.Context(), itemID)
+	if err != nil {
+		slog.Error("failed to get item from ABS", "item_id", itemID, "error", err)
+		http.Error(w, "failed to get item", http.StatusInternalServerError)
+		return
+	}
+	if len(item.Media.AudioFiles) == 0 {
+		http.Error(w, "no audio files", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.ensurePreparing(itemID, h.resolveSourcePaths(item)); err != nil {
+		if errors.Is(err, errQueueFull) {
+			writeQueueFullResponse(w)
+			return
+		}
+		http.Error(w, "cache error", http.StatusInternalServerError)
+		return
+	}
+	writePreparingResponse(w, itemID)
 }
 
 // HandleStop handles POST /transport/stop requests.
@@ -1413,7 +1553,7 @@ func (h *PlayerHandler) HandleStop(w http.ResponseWriter, r *http.Request) {
 		posInfo, _ := avt.GetPositionInfo(ctx)
 		if posInfo != nil {
 			relTime := sonos.ParseDuration(posInfo.RelTime)
-			playback.PositionSec = int(relTime.Seconds())
+			playback.PositionSec = globalPosition(playback, int(relTime.Seconds()))
 			h.playbackStore.UpdatePosition(playback.ID, playback.PositionSec)
 		}
 
@@ -1453,10 +1593,14 @@ func (h *PlayerHandler) HandleStop(w http.ResponseWriter, r *http.Request) {
 	if playback.PositionSec > 0 {
 		absClient, err := h.authHandler.GetABSClientForSession(session)
 		if err == nil {
+			progressFrac := 0.0
+			if playback.DurationSec > 0 {
+				progressFrac = float64(playback.PositionSec) / float64(playback.DurationSec)
+			}
 			progress := abs.ProgressUpdate{
 				CurrentTime: float64(playback.PositionSec),
 				Duration:    float64(playback.DurationSec),
-				Progress:    float64(playback.PositionSec) / float64(playback.DurationSec),
+				Progress:    progressFrac,
 			}
 			if err := absClient.UpdateProgress(ctx, playback.ItemID, progress); err != nil {
 				slog.Warn("failed to sync progress to ABS", "error", err)
@@ -2074,6 +2218,52 @@ func (h *PlayerHandler) HandleGetMemberVolumes(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// ipInDevices reports whether ip is the address of one of the devices.
+func ipInDevices(ip string, devices []*store.SonosDevice) bool {
+	for _, d := range devices {
+		if d != nil && d.IPAddress == ip {
+			return true
+		}
+	}
+	return false
+}
+
+// isKnownSonosIP reports whether ip belongs to a known Sonos player. Client
+// supplied IPs are used as SOAP targets, so they must not point anywhere else.
+// Known players are the discovered devices and, as a fallback for group
+// members that are hidden or not yet discovered, the current topology.
+func (h *PlayerHandler) isKnownSonosIP(ctx context.Context, ip string) bool {
+	if ip == "" || h.sonosStore == nil {
+		return false
+	}
+	devices, err := h.sonosStore.ListAll()
+	if err != nil {
+		slog.Error("failed to list Sonos devices", "error", err)
+		return false
+	}
+	if ipInDevices(ip, devices) {
+		return true
+	}
+
+	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for _, d := range devices {
+		state, err := sonos.NewZoneGroupTopology(d.IPAddress).GetZoneGroupState(tctx)
+		if err != nil {
+			continue
+		}
+		for _, g := range state.ZoneGroups {
+			for _, m := range g.Members {
+				if m.IPAddress == ip {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return false
+}
+
 // HandleSetMemberVolume handles POST /volume/member requests.
 // Sets the volume for a specific group member.
 func (h *PlayerHandler) HandleSetMemberVolume(w http.ResponseWriter, r *http.Request) {
@@ -2113,6 +2303,11 @@ func (h *PlayerHandler) HandleSetMemberVolume(w http.ResponseWriter, r *http.Req
 	}
 
 	ctx := r.Context()
+
+	if !h.isKnownSonosIP(ctx, memberIP) {
+		http.Error(w, "unknown player", http.StatusBadRequest)
+		return
+	}
 
 	// Set volume on the specific member
 	avt := sonos.NewAVTransport(memberIP)
@@ -2346,6 +2541,11 @@ func (h *PlayerHandler) HandleJoinGroup(w http.ResponseWriter, r *http.Request) 
 
 	ctx := r.Context()
 
+	if !h.isKnownSonosIP(ctx, playerIP) {
+		http.Error(w, "unknown player", http.StatusBadRequest)
+		return
+	}
+
 	// Join the group
 	avt := sonos.NewAVTransport(playerIP)
 	if err := avt.JoinGroup(ctx, normalizedCoordinatorUUID); err != nil {
@@ -2387,6 +2587,11 @@ func (h *PlayerHandler) HandleLeaveGroup(w http.ResponseWriter, r *http.Request)
 	}
 
 	ctx := r.Context()
+
+	if !h.isKnownSonosIP(ctx, playerIP) {
+		http.Error(w, "unknown player", http.StatusBadRequest)
+		return
+	}
 
 	// Leave the group
 	avt := sonos.NewAVTransport(playerIP)

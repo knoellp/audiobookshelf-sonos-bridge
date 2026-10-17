@@ -34,6 +34,8 @@ type Client struct {
 	httpClient *http.Client
 	maxRetries int
 	retryDelay time.Duration
+	// reauth, if set, is called once on a 401 to obtain a fresh token.
+	reauth func(ctx context.Context) (string, error)
 }
 
 // NewClient creates a new Audiobookshelf client with sensible defaults.
@@ -66,7 +68,29 @@ func (c *Client) WithToken(token string) *Client {
 		httpClient: c.httpClient,
 		maxRetries: c.maxRetries,
 		retryDelay: c.retryDelay,
+		reauth:     c.reauth,
 	}
+}
+
+// WithReauth returns a copy of the client that calls fn once when the server
+// answers 401, swaps in the returned token and retries the request once.
+func (c *Client) WithReauth(fn func(ctx context.Context) (string, error)) *Client {
+	cp := *c
+	cp.reauth = fn
+	return &cp
+}
+
+// tryReauth obtains a fresh token via the reauth hook and stores it on c.
+func (c *Client) tryReauth(ctx context.Context) error {
+	if c.reauth == nil {
+		return ErrUnauthorized
+	}
+	tok, err := c.reauth(ctx)
+	if err != nil {
+		return err
+	}
+	c.token = tok
+	return nil
 }
 
 // WithTimeout returns a copy of the client with the given timeout.
@@ -88,6 +112,7 @@ func (c *Client) WithTimeout(timeout time.Duration) *Client {
 		},
 		maxRetries: c.maxRetries,
 		retryDelay: c.retryDelay,
+		reauth:     c.reauth,
 	}
 }
 
@@ -99,6 +124,7 @@ func (c *Client) WithRetries(maxRetries int, retryDelay time.Duration) *Client {
 		httpClient: c.httpClient,
 		maxRetries: maxRetries,
 		retryDelay: retryDelay,
+		reauth:     c.reauth,
 	}
 }
 
@@ -291,6 +317,31 @@ func (c *Client) GetItemsInProgress(ctx context.Context, limit int) ([]ItemInPro
 	return resp.LibraryItems, nil
 }
 
+// GetMediaProgressMap returns the user's progress (0.0 to 1.0) for every library
+// item that has progress, keyed by library item ID. Podcast episodes are skipped.
+// The library items list endpoint does not return per-item progress, so /api/me
+// is the source for it.
+func (c *Client) GetMediaProgressMap(ctx context.Context) (map[string]float64, error) {
+	var resp struct {
+		MediaProgress []struct {
+			LibraryItemID string  `json:"libraryItemId"`
+			EpisodeID     *string `json:"episodeId"`
+			Progress      float64 `json:"progress"`
+		} `json:"mediaProgress"`
+	}
+	if err := c.get(ctx, "/api/me", &resp); err != nil {
+		return nil, err
+	}
+	m := make(map[string]float64, len(resp.MediaProgress))
+	for _, p := range resp.MediaProgress {
+		if p.EpisodeID != nil && *p.EpisodeID != "" {
+			continue
+		}
+		m[p.LibraryItemID] = p.Progress
+	}
+	return m, nil
+}
+
 // GetProgress returns the playback progress for an item.
 func (c *Client) GetProgress(ctx context.Context, itemID string) (*Progress, error) {
 	path := fmt.Sprintf("/api/me/progress/%s", itemID)
@@ -312,6 +363,17 @@ func (c *Client) GetProgress(ctx context.Context, itemID string) (*Progress, err
 
 // UpdateProgress updates the playback progress for an item.
 func (c *Client) UpdateProgress(ctx context.Context, itemID string, update ProgressUpdate) error {
+	err := c.updateProgressOnce(ctx, itemID, update)
+	if errors.Is(err, ErrUnauthorized) && c.reauth != nil {
+		if rerr := c.tryReauth(ctx); rerr != nil {
+			return rerr
+		}
+		return c.updateProgressOnce(ctx, itemID, update)
+	}
+	return err
+}
+
+func (c *Client) updateProgressOnce(ctx context.Context, itemID string, update ProgressUpdate) error {
 	path := fmt.Sprintf("/api/me/progress/%s", itemID)
 
 	body, err := json.Marshal(update)
@@ -345,6 +407,17 @@ func (c *Client) UpdateProgress(ctx context.Context, itemID string, update Progr
 
 // GetCover proxies a cover image request and returns the response body.
 func (c *Client) GetCover(ctx context.Context, itemID string) (io.ReadCloser, string, error) {
+	body, ct, err := c.getCoverOnce(ctx, itemID)
+	if errors.Is(err, ErrUnauthorized) && c.reauth != nil {
+		if rerr := c.tryReauth(ctx); rerr != nil {
+			return nil, "", rerr
+		}
+		return c.getCoverOnce(ctx, itemID)
+	}
+	return body, ct, err
+}
+
+func (c *Client) getCoverOnce(ctx context.Context, itemID string) (io.ReadCloser, string, error) {
 	path := fmt.Sprintf("/api/items/%s/cover", itemID)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
@@ -356,6 +429,11 @@ func (c *Client) GetCover(ctx context.Context, itemID string) (io.ReadCloser, st
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, "", fmt.Errorf("cover request failed: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, "", ErrUnauthorized
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -374,6 +452,17 @@ func (c *Client) GetCover(ctx context.Context, itemID string) (io.ReadCloser, st
 
 // get performs a GET request and decodes the JSON response with retry logic.
 func (c *Client) get(ctx context.Context, path string, result interface{}) error {
+	err := c.getWithRetries(ctx, path, result)
+	if errors.Is(err, ErrUnauthorized) && c.reauth != nil {
+		if rerr := c.tryReauth(ctx); rerr != nil {
+			return rerr
+		}
+		return c.getWithRetries(ctx, path, result)
+	}
+	return err
+}
+
+func (c *Client) getWithRetries(ctx context.Context, path string, result interface{}) error {
 	var lastErr error
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {

@@ -76,6 +76,20 @@ func (db *DB) migrate() error {
 
 // runIncrementalMigrations runs ALTER TABLE migrations that modify existing tables.
 func (db *DB) runIncrementalMigrations() error {
+	// Add abs_password_enc column to sessions if not exists (auto re-login)
+	var pwCount int
+	if err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'abs_password_enc'
+	`).Scan(&pwCount); err != nil {
+		return fmt.Errorf("failed to check abs_password_enc column: %w", err)
+	}
+	if pwCount == 0 {
+		slog.Info("migrating sessions: adding abs_password_enc column")
+		if _, err := db.conn.Exec(`ALTER TABLE sessions ADD COLUMN abs_password_enc BLOB DEFAULT NULL`); err != nil {
+			return fmt.Errorf("failed to add abs_password_enc column: %w", err)
+		}
+	}
+
 	// Add cache_format column to cache_index if not exists
 	// SQLite doesn't support IF NOT EXISTS for columns, so we check first
 	var count int

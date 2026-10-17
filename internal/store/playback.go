@@ -13,10 +13,10 @@ type PlaybackSession struct {
 	ItemID              string
 	SonosUUID           string
 	StreamToken         string
-	PositionSec         int        // Global position in seconds (across all segments)
-	DurationSec         int        // Total duration in seconds
-	CurrentSegment      int        // Current segment index (0-based, for segmented playback)
-	SegmentDurationSec  int        // Duration of each segment (e.g., 7200 for 2h)
+	PositionSec         int // Global position in seconds (across all segments)
+	DurationSec         int // Total duration in seconds
+	CurrentSegment      int // Current segment index (0-based, for segmented playback)
+	SegmentDurationSec  int // Duration of each segment (e.g., 7200 for 2h)
 	IsPlaying           bool
 	StartedAt           time.Time
 	LastPositionUpdate  time.Time

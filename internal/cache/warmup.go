@@ -119,14 +119,25 @@ func (j *WarmupJob) run(ctx context.Context) {
 	// Use the first active session's token
 	session := sessions[0]
 
-	// Decrypt the token
-	token, err := j.tokenDecrypt.DecryptToken(session.ABSTokenEnc)
-	if err != nil {
-		slog.Error("failed to decrypt token", "error", err)
-		return
+	var client *abs.Client
+	if p, ok := j.tokenDecrypt.(interface {
+		ClientForSession(*store.Session) (*abs.Client, error)
+	}); ok {
+		// Provider attaches automatic re-login on 401.
+		c, err := p.ClientForSession(session)
+		if err != nil {
+			slog.Error("failed to create ABS client", "error", err)
+			return
+		}
+		client = c
+	} else {
+		token, err := j.tokenDecrypt.DecryptToken(session.ABSTokenEnc)
+		if err != nil {
+			slog.Error("failed to decrypt token", "error", err)
+			return
+		}
+		client = j.absClient.WithToken(token)
 	}
-
-	client := j.absClient.WithToken(token)
 
 	// Get libraries
 	libraries, err := client.GetLibraries(ctx)
@@ -277,33 +288,4 @@ func (j *WarmupJob) warmLibrary(ctx context.Context, client *abs.Client, library
 	}
 
 	return queued
-}
-
-// CleanupStale cleans up stale in_progress entries on startup.
-func (j *WarmupJob) CleanupStale(ctx context.Context) error {
-	slog.Info("cleaning up stale in_progress entries")
-
-	// Get all in_progress entries
-	entries, err := j.index.store.ListByStatus(store.CacheStatusInProgress)
-	if err != nil {
-		return err
-	}
-
-	cleaned := 0
-	for _, entry := range entries {
-		// Reset to pending so they can be re-queued
-		if err := j.index.store.MarkFailed(entry.ItemID, "interrupted"); err != nil {
-			slog.Warn("failed to reset stale entry", "item_id", entry.ItemID, "error", err)
-			continue
-		}
-		cleaned++
-	}
-
-	// Also clean up any temp files
-	if err := j.index.CleanupTempFiles(); err != nil {
-		slog.Warn("failed to cleanup temp files", "error", err)
-	}
-
-	slog.Info("cleaned up stale entries", "count", cleaned)
-	return nil
 }

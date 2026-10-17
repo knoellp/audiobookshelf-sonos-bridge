@@ -477,3 +477,157 @@ func TestDatabaseMigrations(t *testing.T) {
 		t.Fatalf("running migrations twice should not fail: %v", err)
 	}
 }
+
+func TestSessionStore_PasswordAndUpdateCredentials(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+	ss := NewSessionStore(db)
+
+	now := time.Now()
+	if err := ss.Create(&Session{ID: "s1", ABSTokenEnc: []byte("tok"), ABSPasswordEnc: []byte("pw"),
+		ABSUserID: "u", ABSUsername: "n", CreatedAt: now, LastUsedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	// Legacy session without password
+	if err := ss.Create(&Session{ID: "s2", ABSTokenEnc: []byte("tok"), ABSUserID: "u", ABSUsername: "n",
+		CreatedAt: now, LastUsedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ss.Get("s1")
+	if err != nil || got == nil || string(got.ABSPasswordEnc) != "pw" {
+		t.Fatalf("Get: %v %+v", err, got)
+	}
+	legacy, _ := ss.Get("s2")
+	if legacy == nil || len(legacy.ABSPasswordEnc) != 0 {
+		t.Errorf("legacy session should have empty password, got %+v", legacy)
+	}
+
+	if err := ss.UpdateCredentials("s1", []byte("tok2"), []byte("pw2")); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = ss.Get("s1")
+	if string(got.ABSTokenEnc) != "tok2" || string(got.ABSPasswordEnc) != "pw2" {
+		t.Errorf("UpdateCredentials not applied: %+v", got)
+	}
+
+	list, err := ss.List()
+	if err != nil || len(list) != 2 {
+		t.Fatalf("List: %v %d", err, len(list))
+	}
+	active, err := ss.ListActive()
+	if err != nil || len(active) != 2 {
+		t.Fatalf("ListActive: %v %d", err, len(active))
+	}
+}
+
+func TestMigration_AddsAbsPasswordEncColumn(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Recreate the pre-migration sessions table.
+	if _, err := db.Conn().Exec(`DROP TABLE sessions`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Conn().Exec(`CREATE TABLE sessions (
+		id TEXT PRIMARY KEY, abs_token_enc BLOB NOT NULL, abs_user_id TEXT NOT NULL,
+		abs_username TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Conn().Exec(`INSERT INTO sessions VALUES ('old', x'01', 'u', 'n', 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.runIncrementalMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	db.Conn().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='abs_password_enc'`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("column not added")
+	}
+	got, err := NewSessionStore(db).Get("old")
+	if err != nil || got == nil || len(got.ABSPasswordEnc) != 0 {
+		t.Fatalf("legacy row unreadable: %v %+v", err, got)
+	}
+	// Idempotent
+	if err := db.runIncrementalMigrations(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlaybackStore_DeleteBySessionID(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	sessions := NewSessionStore(db)
+	for _, id := range []string{"sess-a", "sess-b"} {
+		if err := sessions.Create(&Session{ID: id, ABSTokenEnc: []byte("t"), ABSUserID: "u", ABSUsername: "n", CreatedAt: time.Now(), LastUsedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	NewDeviceStore(db).Upsert(&SonosDevice{UUID: "uuid:1", Name: "d", IPAddress: "1.2.3.4", DiscoveredAt: time.Now(), LastSeenAt: time.Now()})
+
+	ps := NewPlaybackStore(db)
+	mk := func(id, sess string) {
+		if err := ps.Create(&PlaybackSession{ID: id, SessionID: sess, ItemID: "i", SonosUUID: "uuid:1", StartedAt: time.Now(), LastPositionUpdate: time.Now(), ABSProgressSyncedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("p1", "sess-a")
+	mk("p2", "sess-b")
+
+	if err := ps.DeleteBySessionID("sess-a"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := ps.Get("p1"); got != nil {
+		t.Error("p1 should be deleted")
+	}
+	if got, _ := ps.Get("p2"); got == nil {
+		t.Error("p2 of another session must remain")
+	}
+	if err := ps.DeleteBySessionID("nonexistent"); err != nil {
+		t.Errorf("deleting nothing should not fail: %v", err)
+	}
+}
+
+func TestCacheStore_CreateUpserts(t *testing.T) {
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	cs := NewCacheStore(db)
+	entry := &CacheEntry{
+		ItemID:         "item-up",
+		SourcePath:     "/media/a.m4b",
+		SourceSize:     100,
+		SourceMtime:    time.Now(),
+		ProfileVersion: "v3",
+		CachePath:      "/cache/item-up/audio.mp3",
+		CacheFormat:    "mp3",
+		Status:         CacheStatusFailed,
+		ErrorText:      "boom",
+	}
+	if err := cs.Create(entry); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+
+	entry.SourcePath = "/media/b.m4b"
+	entry.SourceSize = 200
+	entry.CacheFormat = "m4a"
+	entry.Status = CacheStatusPending
+	entry.ErrorText = ""
+	if err := cs.Create(entry); err != nil {
+		t.Fatalf("second create should upsert, got: %v", err)
+	}
+
+	got, err := cs.Get("item-up")
+	if err != nil || got == nil {
+		t.Fatalf("Get: %v %v", got, err)
+	}
+	if got.SourcePath != "/media/b.m4b" || got.SourceSize != 200 || got.CacheFormat != "m4a" {
+		t.Errorf("entry not updated: %+v", got)
+	}
+	if got.Status != CacheStatusPending || got.ErrorText != "" {
+		t.Errorf("status/error not reset: %s %q", got.Status, got.ErrorText)
+	}
+}

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"audiobookshelf-sonos-bridge/internal/store"
 )
 
 // TranscodeProfile defines the output format settings.
@@ -165,9 +167,9 @@ func (t *Transcoder) TranscodeMultiple(ctx context.Context, inputPaths []string,
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatListPath,
-		"-map", "0:a",          // Select only audio streams (excludes data/subtitle streams)
-		"-map_chapters", "-1",  // Remove chapter metadata (prevents bin_data stream that Sonos can't handle)
-		"-vn",                  // No video
+		"-map", "0:a", // Select only audio streams (excludes data/subtitle streams)
+		"-map_chapters", "-1", // Remove chapter metadata (prevents bin_data stream that Sonos can't handle)
+		"-vn", // No video
 		"-ar", strconv.Itoa(t.profile.SampleRate),
 		"-ac", strconv.Itoa(t.profile.Channels),
 		"-b:a", t.profile.Bitrate,
@@ -183,6 +185,10 @@ func (t *Transcoder) TranscodeMultiple(ctx context.Context, inputPaths []string,
 	if err != nil {
 		os.Remove(tempPath)
 
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
 			outputStr := string(output)
@@ -193,10 +199,6 @@ func (t *Transcoder) TranscodeMultiple(ctx context.Context, inputPaths []string,
 				Output:   truncateOutput(outputStr, 500),
 				Err:      parsedErr,
 			}
-		}
-
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
 		}
 
 		return nil, &TranscodeError{
@@ -263,9 +265,9 @@ func (t *Transcoder) Transcode(ctx context.Context, inputPath, outputPath string
 	// -map 0:a selects only audio streams, excluding data streams (like chapter markers)
 	args := []string{
 		"-i", inputPath,
-		"-map", "0:a",          // Select only audio streams (excludes data/subtitle streams)
-		"-map_chapters", "-1",  // Remove chapter metadata (prevents bin_data stream that Sonos can't handle)
-		"-vn",                  // No video
+		"-map", "0:a", // Select only audio streams (excludes data/subtitle streams)
+		"-map_chapters", "-1", // Remove chapter metadata (prevents bin_data stream that Sonos can't handle)
+		"-vn", // No video
 		"-ar", strconv.Itoa(t.profile.SampleRate),
 		"-ac", strconv.Itoa(t.profile.Channels),
 		"-b:a", t.profile.Bitrate,
@@ -282,6 +284,10 @@ func (t *Transcoder) Transcode(ctx context.Context, inputPath, outputPath string
 		// Clean up temp file on error
 		os.Remove(tempPath)
 
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
 			outputStr := string(output)
@@ -297,9 +303,6 @@ func (t *Transcoder) Transcode(ctx context.Context, inputPath, outputPath string
 		}
 
 		// Check if context was cancelled
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
 
 		return nil, &TranscodeError{
 			Err: fmt.Errorf("ffmpeg failed: %w", err),
@@ -331,12 +334,26 @@ func (t *Transcoder) Transcode(ctx context.Context, inputPath, outputPath string
 	}, nil
 }
 
-// truncateOutput truncates a string to maxLen characters.
+// truncateOutput shortens a string to roughly maxLen characters. It keeps the
+// first line (usually the version banner) and the tail, because the actual
+// error message of ffmpeg is printed at the end.
 func truncateOutput(s string, maxLen int) string {
+	const tailLen = 800
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "...[truncated]"
+	first := s
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		first = s[:i]
+	}
+	if len(first) > 200 {
+		first = first[:200]
+	}
+	if len(s) < tailLen {
+		return s
+	}
+	tail := s[len(s)-tailLen:]
+	return first + "\n...[truncated]...\n" + tail
 }
 
 // GetDuration returns the duration of an audio file in seconds.
@@ -450,10 +467,10 @@ func (t *Transcoder) Remux(ctx context.Context, inputPath, outputPath string, ou
 	// See: docs/references/ffmpeg.md#stream-copy-no-re-encoding
 	args := []string{
 		"-i", inputPath,
-		"-map", "0:a",          // Select only audio streams (excludes data/subtitle streams)
-		"-map_chapters", "-1",  // Remove chapter metadata (prevents bin_data stream that Sonos can't handle)
-		"-c:a", "copy",         // Copy audio stream without re-encoding
-		"-vn",                  // No video (removes cover art etc.)
+		"-map", "0:a", // Select only audio streams (excludes data/subtitle streams)
+		"-map_chapters", "-1", // Remove chapter metadata (prevents bin_data stream that Sonos can't handle)
+		"-c:a", "copy", // Copy audio stream without re-encoding
+		"-vn", // No video (removes cover art etc.)
 	}
 
 	// Add movflags for MP4/M4A files to enable HTTP streaming
@@ -481,6 +498,10 @@ func (t *Transcoder) Remux(ctx context.Context, inputPath, outputPath string, ou
 		// Clean up temp file on error
 		os.Remove(tempPath)
 
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
 			outputStr := string(output)
@@ -496,9 +517,6 @@ func (t *Transcoder) Remux(ctx context.Context, inputPath, outputPath string, ou
 		}
 
 		// Check if context was cancelled
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
 
 		return nil, &TranscodeError{
 			Err: fmt.Errorf("ffmpeg remux failed: %w", err),
@@ -596,10 +614,10 @@ func (t *Transcoder) RemuxMultiple(ctx context.Context, inputPaths []string, out
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatListPath,
-		"-map", "0:a",          // Select only audio streams (excludes data/subtitle streams)
-		"-map_chapters", "-1",  // Remove chapter metadata (prevents bin_data stream that Sonos can't handle)
-		"-c:a", "copy",         // Copy audio stream (no re-encoding)
-		"-vn",                  // No video
+		"-map", "0:a", // Select only audio streams (excludes data/subtitle streams)
+		"-map_chapters", "-1", // Remove chapter metadata (prevents bin_data stream that Sonos can't handle)
+		"-c:a", "copy", // Copy audio stream (no re-encoding)
+		"-vn", // No video
 	}
 
 	// Add movflags for MP4/M4A files to enable HTTP streaming
@@ -624,6 +642,10 @@ func (t *Transcoder) RemuxMultiple(ctx context.Context, inputPaths []string, out
 	if err != nil {
 		os.Remove(tempPath)
 
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
 			outputStr := string(output)
@@ -634,10 +656,6 @@ func (t *Transcoder) RemuxMultiple(ctx context.Context, inputPaths []string, out
 				Output:   truncateOutput(outputStr, 500),
 				Err:      parsedErr,
 			}
-		}
-
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
 		}
 
 		return nil, &TranscodeError{
@@ -783,13 +801,15 @@ func (t *Transcoder) RemuxSegmented(ctx context.Context, inputPath, outputDir st
 		"segment_duration", SegmentDuration)
 
 	// Determine file extension
-	ext := ".m4a"
-	switch outputFormat {
-	case "mp3":
-		ext = ".mp3"
-	case "flac":
-		ext = ".flac"
-	}
+	ext := store.SegmentExt(outputFormat)
+
+	// Remove segments created by this run if we fail (or are canceled) midway.
+	success := false
+	defer func() {
+		if !success {
+			removeSegmentFiles(outputDir)
+		}
+	}()
 
 	var totalSize int64
 
@@ -817,10 +837,10 @@ func (t *Transcoder) RemuxSegmented(ctx context.Context, inputPath, outputDir st
 			"-ss", strconv.Itoa(startTime),
 			"-i", inputPath,
 			"-t", strconv.Itoa(segmentDuration),
-			"-map", "0:a",         // Select only audio streams
+			"-map", "0:a", // Select only audio streams
 			"-map_chapters", "-1", // Remove chapter metadata
-			"-c:a", "copy",        // Copy audio stream without re-encoding
-			"-vn",                 // No video
+			"-c:a", "copy", // Copy audio stream without re-encoding
+			"-vn", // No video
 		}
 
 		// Add format-specific options
@@ -838,6 +858,10 @@ func (t *Transcoder) RemuxSegmented(ctx context.Context, inputPath, outputDir st
 		if err != nil {
 			os.Remove(tempPath)
 
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				exitCode := exitErr.ExitCode()
 				outputStr := string(output)
@@ -848,10 +872,6 @@ func (t *Transcoder) RemuxSegmented(ctx context.Context, inputPath, outputDir st
 					Output:   truncateOutput(outputStr, 500),
 					Err:      fmt.Errorf("segment %d: %w", i, parsedErr),
 				}
-			}
-
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
 			}
 
 			return nil, &TranscodeError{
@@ -882,6 +902,7 @@ func (t *Transcoder) RemuxSegmented(ctx context.Context, inputPath, outputDir st
 		"segment_count", segmentCount,
 		"total_size", totalSize)
 
+	success = true
 	return &SegmentedResult{
 		DurationSec:        totalDuration,
 		SegmentCount:       segmentCount,
@@ -936,6 +957,14 @@ func (t *Transcoder) TranscodeSegmented(ctx context.Context, inputPath, outputDi
 		"segment_count", segmentCount,
 		"segment_duration", SegmentDuration)
 
+	// Remove segments created by this run if we fail (or are canceled) midway.
+	success := false
+	defer func() {
+		if !success {
+			removeSegmentFiles(outputDir)
+		}
+	}()
+
 	var totalSize int64
 
 	// Create each segment
@@ -976,6 +1005,10 @@ func (t *Transcoder) TranscodeSegmented(ctx context.Context, inputPath, outputDi
 		if err != nil {
 			os.Remove(tempPath)
 
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				exitCode := exitErr.ExitCode()
 				outputStr := string(output)
@@ -986,10 +1019,6 @@ func (t *Transcoder) TranscodeSegmented(ctx context.Context, inputPath, outputDi
 					Output:   truncateOutput(outputStr, 500),
 					Err:      fmt.Errorf("segment %d: %w", i, parsedErr),
 				}
-			}
-
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
 			}
 
 			return nil, &TranscodeError{
@@ -1020,6 +1049,7 @@ func (t *Transcoder) TranscodeSegmented(ctx context.Context, inputPath, outputDi
 		"segment_count", segmentCount,
 		"total_size", totalSize)
 
+	success = true
 	return &SegmentedResult{
 		DurationSec:        totalDuration,
 		SegmentCount:       segmentCount,
@@ -1076,15 +1106,26 @@ func (t *Transcoder) SmartTranscodeSegmented(ctx context.Context, inputPath, out
 	}
 }
 
-// SmartTranscodeMultiple intelligently handles multiple files.
-func (t *Transcoder) SmartTranscodeMultiple(ctx context.Context, inputPaths []string, outputPath string) (*TranscodeResult, error) {
+// SmartTranscodeMultiple intelligently handles multiple files. Besides the
+// result it returns the format actually written to outputPath ("mp4", "mp3" or
+// "flac"), which may differ from what the caller derived from the first file
+// (e.g. mixed codecs fall back to MP3).
+func (t *Transcoder) SmartTranscodeMultiple(ctx context.Context, inputPaths []string, outputPath string) (*TranscodeResult, string, error) {
 	if len(inputPaths) == 0 {
-		return nil, ErrInputFileNotFound
+		return nil, "", ErrInputFileNotFound
 	}
 
 	// If only one file, use regular smart transcode
 	if len(inputPaths) == 1 {
-		return t.SmartTranscode(ctx, inputPaths[0], outputPath)
+		format := "mp3"
+		if af, err := NewFormatDetector().Detect(ctx, inputPaths[0]); err == nil {
+			checker := NewCompatibilityChecker()
+			if c := checker.Check(af); c == Compatible || c == NeedsRemux {
+				format = checker.GetTargetFormat(af)
+			}
+		}
+		res, err := t.SmartTranscode(ctx, inputPaths[0], outputPath)
+		return res, format, err
 	}
 
 	slog.Debug("analyzing multiple files for smart transcode", "file_count", len(inputPaths))
@@ -1106,7 +1147,8 @@ func (t *Transcoder) SmartTranscodeMultiple(ctx context.Context, inputPaths []st
 				"file_index", i,
 				"path", path,
 				"error", err)
-			return t.TranscodeMultiple(ctx, inputPaths, outputPath)
+			res, err := t.TranscodeMultiple(ctx, inputPaths, outputPath)
+			return res, "mp3", err
 		}
 		formats = append(formats, format)
 
@@ -1138,7 +1180,8 @@ func (t *Transcoder) SmartTranscodeMultiple(ctx context.Context, inputPaths []st
 			"codec", firstCodec,
 			"target_format", checker.GetTargetFormat(formats[0]))
 		targetFormat := checker.GetTargetFormat(formats[0])
-		return t.RemuxMultiple(ctx, inputPaths, outputPath, targetFormat)
+		res, err := t.RemuxMultiple(ctx, inputPaths, outputPath, targetFormat)
+		return res, targetFormat, err
 	}
 
 	// Otherwise, fall back to transcode (which re-encodes everything to a common format)
@@ -1146,5 +1189,19 @@ func (t *Transcoder) SmartTranscodeMultiple(ctx context.Context, inputPaths []st
 		"file_count", len(inputPaths),
 		"same_codec", allSameCodec,
 		"can_remux", canRemux)
-	return t.TranscodeMultiple(ctx, inputPaths, outputPath)
+	res, err := t.TranscodeMultiple(ctx, inputPaths, outputPath)
+	return res, "mp3", err
+}
+
+// removeSegmentFiles deletes segment files (and their temp files) from dir.
+func removeSegmentFiles(dir string) {
+	for _, pattern := range []string{"segment_*.*"} {
+		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			continue
+		}
+		for _, m := range matches {
+			os.Remove(m)
+		}
+	}
 }
