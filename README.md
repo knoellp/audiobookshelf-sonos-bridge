@@ -39,7 +39,7 @@ Play audiobooks from [Audiobookshelf](https://www.audiobookshelf.org/) on your S
 
 - [Audiobookshelf](https://www.audiobookshelf.org/) server
 - Sonos speakers on the same network
-- Docker (recommended) or Go 1.22+
+- Docker (recommended) or Go 1.27+
 - ffmpeg (for audio transcoding)
 
 ## Quick Start
@@ -113,7 +113,7 @@ docker compose up -d
 git clone https://github.com/knoellp/audiobookshelf-sonos-bridge.git
 cd audiobookshelf-sonos-bridge
 
-# Build (requires Go 1.22+ and ffmpeg)
+# Build (requires Go 1.27+ and ffmpeg)
 go build -o bridge ./cmd/bridge
 
 # Run

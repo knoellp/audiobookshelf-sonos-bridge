@@ -196,14 +196,10 @@ func TestAVTransport_MockServer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Extract host from server URL (remove http://)
-	host := server.URL[7:]
-
-	// Create AVTransport with mock server
-	// Note: We need to modify the port in the actual implementation
-	// For testing, we'll use the full URL directly
+	// Create AVTransport with a bare IP, like production. The client appends
+	// :1400 itself; mockTransport redirects the request to the test server.
 	transport := &AVTransport{
-		deviceIP:   host,
+		deviceIP:   "127.0.0.1",
 		httpClient: server.Client(),
 	}
 

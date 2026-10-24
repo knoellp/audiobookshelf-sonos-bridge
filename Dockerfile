@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.22-alpine AS build
+FROM golang:1.27-alpine AS build
 
 # Build arguments for versioning
 ARG VERSION=dev

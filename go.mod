@@ -1,6 +1,6 @@
 module audiobookshelf-sonos-bridge
 
-go 1.22
+go 1.27
 
 require modernc.org/sqlite v1.28.0
 
